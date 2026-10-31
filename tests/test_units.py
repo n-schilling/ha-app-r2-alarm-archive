@@ -237,3 +237,15 @@ def test_discovery():
     assert comps["r2_connection"]["device_class"] == "connectivity"
     assert comps["archiving"]["device_class"] == "running"
     assert payload["availability"] == [{"topic": "r2_alarm_archive/availability"}]
+
+
+def test_unreadable_queue_entry_is_kept_aside(tmp_path):
+    queue = Queue(tmp_path / "q")
+    queue.add("k1", "log", "2026-10-31", b"one", "application/json")
+    (tmp_path / "q" / "0000000001.json").write_text('{"key": "k1"}')
+    again = Queue(tmp_path / "q")
+    assert len(again) == 0
+    kept = tmp_path / "q" / "quarantine"
+    assert (kept / "0000000001.json").exists() and (kept / "0000000001.bin").read_bytes() == b"one"
+    # The quarantine folder is not read as queue entries
+    assert len(Queue(tmp_path / "q")) == 0

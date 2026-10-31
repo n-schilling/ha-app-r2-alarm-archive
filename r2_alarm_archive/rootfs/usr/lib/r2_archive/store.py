@@ -10,11 +10,14 @@ meta file written after it; without the meta file it does not exist.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+LOGGER = logging.getLogger(__name__)
 
 
 def write_atomic(path: Path, data: bytes) -> None:
@@ -53,12 +56,21 @@ class Queue:
             try:
                 raw = json.loads(meta.read_text())
                 item = Item(seq=int(meta.stem), **raw)
-            except (OSError, ValueError, TypeError):
-                meta.unlink(missing_ok=True)
+            except (OSError, ValueError, TypeError) as err:
+                # Never drop queued data: set it aside for a look by hand
+                self._quarantine(meta, err)
                 continue
             self._items[item.seq] = item
         self._keys = {item.key for item in self._items.values()}
         self._next = max(self._items, default=0) + 1
+
+    def _quarantine(self, meta: Path, err: Exception) -> None:
+        folder = self._folder / "quarantine"
+        folder.mkdir(exist_ok=True)
+        for path in (meta, meta.with_suffix(".bin")):
+            if path.exists():
+                os.replace(path, folder / path.name)
+        LOGGER.error("Queued object %s is unreadable (%s); moved to %s", meta.stem, err, folder)
 
     def __len__(self) -> int:
         return len(self._items)

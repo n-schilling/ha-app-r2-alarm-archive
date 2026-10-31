@@ -2,6 +2,12 @@
 
 All notable changes to this app are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the app uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-10-31
+
+### Fixed
+
+- A queued object whose description cannot be read is no longer deleted at start; it is moved to `/data/queue/quarantine` and named in the log
+
 ## [0.2.0] - 2026-10-31
 
 ### Added
