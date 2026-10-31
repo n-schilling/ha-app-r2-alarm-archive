@@ -1,0 +1,72 @@
+configuration:
+  account_id:
+    name: Cloudflare-Konto-ID
+    description: Die 32 Hex-Zeichen aus dem Cloudflare-Dashboard (Account home, Kontomenü → Copy account ID).
+  bucket:
+    name: Bucket
+    description: Ein vorhandener R2-Bucket nur für dieses Archiv, Speicherklasse Standard.
+  jurisdiction:
+    name: Rechtsraum
+    description: "default, oder eu für einen Bucket mit EU-Rechtsraum."
+  access_key_id:
+    name: R2-Zugriffsschlüssel-ID
+    description: Aus einem R2-API-Token mit Object Read & Write, nur für diesen Bucket.
+  secret_access_key:
+    name: R2-Geheimschlüssel
+  api_token:
+    name: Cloudflare-API-Token
+    description: Lesendes Konto-Token mit Account Analytics Read und Workers R2 Storage Read. Nötig für den Free-Tier-Wächter und die Prüfung der Bucket-Regeln.
+  free_tier_guard:
+    name: Free-Tier-Wächter
+    description: Hält das ganze Cloudflare-Konto 10 % unter jeder Grenze des R2-Free-Tiers; was sie überschreiten würde, wartet in der Warteschlange.
+  log_entity:
+    name: Protokoll-Entität
+    description: Die Entität, unter der das Alarm-Protokoll mit logbook.log geschrieben wird, z. B. input_boolean.alarm_log.
+  alarm_panel:
+    name: Alarmzentrale
+    description: Optional. Das alarm_control_panel, dessen Zustandswechsel Snapshots bekommen.
+  snapshot_states:
+    name: Snapshot-Zustände
+    description: Zustände der Zentrale, die einen Snapshot bekommen.
+  snapshot_entities:
+    name: Snapshot-Entitäten
+    description: Entitäten, deren Zustände in einen Snapshot kommen; Gruppen zählen mit ihren Mitgliedern. Die Zentrale ist immer dabei.
+  snapshot_all_entities:
+    name: Alle Entitäten im Snapshot
+    description: Stattdessen die Zustände aller Entitäten in jeden Snapshot.
+  cameras:
+    name: Kameras
+    description: Kamera-Entitäten mit je einem Bild pro Snapshot.
+  retention_log:
+    name: Aufbewahrung Protokoll
+    description: "unlimited oder Tage. Die App prüft, ob der Bucket eine passende Lifecycle-Regel hat; sie setzt sie nicht."
+  retention_snapshots:
+    name: Aufbewahrung Snapshots
+    description: "unlimited oder Tage, wie oben."
+  retention_summaries:
+    name: Aufbewahrung Zusammenfassungen
+    description: "unlimited oder Tage, wie oben."
+  lock_log:
+    name: Bucket Lock Protokoll
+    description: "off, indefinite oder Tage. Die App prüft, ob der Bucket eine passende Lock-Regel hat; sie setzt sie nicht."
+  lock_snapshots:
+    name: Bucket Lock Snapshots
+    description: "off, indefinite oder Tage, wie oben."
+  lock_summaries:
+    name: Bucket Lock Zusammenfassungen
+    description: "off, indefinite oder Tage, wie oben."
+  discovery_prefix:
+    name: MQTT-Discovery-Präfix
+    description: Präfix, auf dem Home Assistant MQTT-Discovery empfängt.
+  mqtt_host:
+    name: MQTT-Host
+    description: Nur für einen Broker, den der Supervisor nicht kennt; leer nutzt die Mosquitto-Broker-App.
+  mqtt_port:
+    name: MQTT-Port
+  mqtt_username:
+    name: MQTT-Benutzer
+  mqtt_password:
+    name: MQTT-Passwort
+  log_level:
+    name: Log-Level
+    description: "Wie viel die App in ihr Log schreibt: info, warning oder error."

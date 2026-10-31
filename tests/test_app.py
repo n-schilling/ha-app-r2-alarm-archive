@@ -1,0 +1,260 @@
+"""The archive with fakes for Home Assistant, R2 and Cloudflare: the log
+stream, uploads past the guard, snapshots live and rebuilt, summaries."""
+
+import asyncio
+import contextlib
+import json
+from datetime import UTC, datetime, timedelta
+
+import pytest
+
+from conftest import BERLIN, Clock, FakeCloudflare, FakeHA, FakeR2, make_config, unzip
+from r2_archive import app as app_module
+from r2_archive.app import Archive
+from r2_archive.cloudflare import Usage
+from r2_archive.r2 import R2Error
+from r2_archive.store import Queue, State
+
+LOG = "input_boolean.alarm_log"
+PANEL = "alarm_control_panel.home"
+
+
+@pytest.fixture(autouse=True)
+def no_waiting(monkeypatch):
+    monkeypatch.setattr(app_module, "BACKOFF", (0, 0, 0, 0))
+
+
+NO_USAGE = Usage(0, 0, 0)
+
+
+def build(tmp_path, cfg=None, guard_usage=NO_USAGE, **extra):
+    cfg = cfg or make_config(tmp_path, **extra)
+    ha, r2, cf, clock = FakeHA(), FakeR2(), FakeCloudflare(), Clock()
+    archive = Archive(cfg, ha, r2, cf, Queue(tmp_path / "queue"), State(tmp_path / "state.json"), clock)
+    archive.tz = BERLIN
+    archive._ready.set()
+    if guard_usage is not None:
+        archive.guard.update(guard_usage, asyncio.get_running_loop().time(), (2026, 10))
+    return archive, ha, r2, cf, clock
+
+
+def log_event(*entries):
+    return {"events": [{"entity_id": LOG, "name": "Alarm", "message": m, "when": w} for w, m in entries]}
+
+
+async def settle(condition, timeout=2.0):
+    async with asyncio.timeout(timeout):
+        while not condition():
+            await asyncio.sleep(0.01)
+
+
+@contextlib.asynccontextmanager
+async def running(*coros):
+    tasks = [asyncio.create_task(c) for c in coros]
+    try:
+        yield tasks
+    finally:
+        for task in tasks:
+            task.cancel()
+        for task in tasks:
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+
+T1 = datetime(2026, 10, 31, 10, 17, 33, tzinfo=UTC).timestamp()
+T2 = T1 + 11
+
+
+async def test_log_is_queued_and_uploaded(tmp_path):
+    archive, ha, r2, _, clock = build(tmp_path)
+    async with running(archive.follow_log(), archive.upload_loop()):
+        await settle(lambda: ha.log_start is not None)
+        assert ha.log_start == (clock() - timedelta(days=400)).isoformat()
+        await ha.log_events.put(log_event((T1, "ALARM ausgelöst"), (T2, "Manuell entschärft")))
+        await ha.log_events.put({"events": [{"entity_id": LOG, "state": "on", "when": T2 + 1}]})
+        await settle(lambda: len(r2.objects) == 2 and not len(archive.queue))
+    keys = sorted(r2.objects)
+    assert all(k.startswith("protokoll/2026/10/31/") for k in keys)
+    assert json.loads(r2.objects[keys[0]])["message"] == "ALARM ausgelöst"
+    assert archive.state.data["log_cursor"] == T2
+    assert sorted(archive.state.data["uploaded"]["2026-10-31"]) == keys
+    assert archive.r2_connected is True and archive.state.data["last_upload"]
+
+    # A restart resumes a second before the newest entry; entries seen again
+    # are not queued a second time
+    again, ha2, r2b, _, _ = build(tmp_path)
+    async with running(again.follow_log()):
+        await settle(lambda: ha2.log_start is not None)
+        assert ha2.log_start == datetime.fromtimestamp(T2 - 1, UTC).isoformat()
+        await ha2.log_events.put(log_event((T2, "Manuell entschärft")))
+        await asyncio.sleep(0.05)
+    assert len(again.queue) == 0
+
+
+async def test_existing_object_counts_as_uploaded(tmp_path):
+    archive, ha, r2, _, _ = build(tmp_path)
+    from r2_archive import archive as a
+    entry = a.log_entry(log_event((T1, "ALARM"))["events"][0], LOG)
+    key, day, body = a.log_object(entry, BERLIN)
+    r2.objects[key] = body
+    archive._enqueue(key, "log", day, body, "application/json")
+    async with running(archive.upload_loop()):
+        await settle(lambda: not len(archive.queue))
+    assert archive.state.data["uploaded"][day] == [key]
+    assert archive.guard.own["storage"] == 0
+
+
+async def test_guard_holds_uploads_back(tmp_path):
+    archive, _, r2, _, _ = build(tmp_path, guard_usage=None)
+    archive._enqueue("protokoll/2026/10/31/x.json", "log", "2026-10-31", b"x", "application/json")
+    async with running(archive.upload_loop()):
+        await asyncio.sleep(0.05)
+        assert r2.objects == {} and len(archive.queue) == 1
+        assert archive.status()["free_tier_limit"] is None          # no figure, no known limit
+        archive.guard.update(Usage(899_999, 0, 0), asyncio.get_running_loop().time(), (2026, 10))
+        archive._wake.set()
+        await asyncio.sleep(0.05)
+        assert r2.objects == {} and archive.status()["free_tier_limit"] is True
+        archive.guard.update(Usage(10, 0, 0), asyncio.get_running_loop().time(), (2026, 10))
+        archive._wake.set()
+        await settle(lambda: not len(archive.queue))
+    assert archive.guard.own["class_a"] == 1 and archive.status()["free_tier_usage"] == 0.0
+
+
+async def test_r2_unreachable_keeps_the_queue(tmp_path):
+    archive, _, r2, _, _ = build(tmp_path)
+    r2.fail = R2Error("PUT x: Cannot connect")
+    archive._enqueue("protokoll/2026/10/31/x.json", "log", "2026-10-31", b"x", "application/json")
+    async with running(archive.upload_loop()):
+        await settle(lambda: archive.r2_connected is False)
+        assert len(archive.queue) == 1
+        # An error answer means R2 is there
+        r2.fail = R2Error("PUT x: HTTP 400", 400, "InvalidArgument")
+        await settle(lambda: archive.r2_connected is True)
+        r2.fail = None
+        await settle(lambda: not len(archive.queue))
+
+
+def panel_event(old, new, when, user="u1"):
+    return {"variables": {"trigger": {
+        "from_state": {"state": old},
+        "to_state": {"state": new, "last_changed": when.isoformat(), "attributes": {"changed_by": None},
+                     "context": {"user_id": user}}}}}
+
+
+async def test_live_snapshot(tmp_path):
+    archive, ha, r2, _, clock = build(tmp_path, cameras=["camera.front", "camera.back"])
+    ha.state_list = [
+        {"entity_id": PANEL, "state": "triggered", "attributes": {}, "last_changed": "t"},
+        {"entity_id": "binary_sensor.doors_and_windows", "state": "on",
+         "attributes": {"entity_id": ["binary_sensor.window_a", "binary_sensor.window_b"]}},
+        {"entity_id": "binary_sensor.window_a", "state": "on", "attributes": {}},
+        {"entity_id": "binary_sensor.window_b", "state": "off", "attributes": {}},
+        {"entity_id": "light.unrelated", "state": "on", "attributes": {}},
+    ]
+    when = datetime(2026, 10, 31, 10, 17, 33, tzinfo=UTC)
+    clock.moment = when - timedelta(minutes=10)
+    async with running(archive.follow_panel(), archive.upload_loop()):
+        await settle(lambda: archive.state.data["panel_cursor"] is not None)
+        await ha.panel_events.put(panel_event("armed_night", "arming", when - timedelta(minutes=5)))
+        await ha.panel_events.put(panel_event("armed_night", "triggered", when))
+        await settle(lambda: len(r2.objects) == 3)
+    folder = "snapshots/2026/10/31/20261031T101733.000000Z_triggered/"
+    assert sorted(r2.objects) == [folder + "kamera_front.jpg", folder + "meta.json", folder + "zustand.json.gz"]
+    states = unzip(r2.objects[folder + "zustand.json.gz"])
+    assert [s["entity_id"] for s in states["states"]] == [
+        PANEL, "binary_sensor.doors_and_windows", "binary_sensor.window_a", "binary_sensor.window_b"]
+    meta = json.loads(r2.objects[folder + "meta.json"])
+    assert meta["from"] == "armed_night" and meta["to"] == "triggered" and meta["user_id"] == "u1"
+    assert meta["missing_cameras"] == ["camera.back"] and not meta["reconstructed"]
+    assert archive.state.data["panel_cursor"] == when.isoformat()
+
+
+async def test_missed_snapshot_is_rebuilt(tmp_path):
+    archive, ha, r2, _, _ = build(tmp_path)
+    cursor = datetime(2026, 10, 30, 21, 0, tzinfo=UTC)
+    archive.state.data["panel_cursor"] = cursor.isoformat()
+    armed = datetime(2026, 10, 30, 21, 36, 48, tzinfo=UTC)
+    ha.state_list = [{"entity_id": PANEL, "state": "armed_night", "attributes": {}},
+                     {"entity_id": "binary_sensor.doors_and_windows", "state": "off", "attributes": {}}]
+    ha.history_data = {
+        PANEL: [{"s": "disarmed", "lu": cursor.timestamp() - 100},
+                {"s": "armed_night", "a": {"previous_state": "disarmed"}, "lu": armed.timestamp()}],
+        "binary_sensor.doors_and_windows": [{"s": "off", "a": {}, "lu": cursor.timestamp() - 500}],
+    }
+    async with running(archive.follow_panel(), archive.upload_loop()):
+        await settle(lambda: len(r2.objects) == 2)
+    folder = "snapshots/2026/10/30/20261030T213648.000000Z_armed_night/"
+    assert sorted(r2.objects) == [folder + "meta.json", folder + "zustand.json.gz"]
+    meta = json.loads(r2.objects[folder + "meta.json"])
+    assert meta["reconstructed"] and meta["missing_cameras"] == ["camera.front"] and meta["from"] == "disarmed"
+    states = unzip(r2.objects[folder + "zustand.json.gz"])
+    # The fake answers every history call alike; the states come from its first record each
+    assert states["reconstructed"]
+    assert {s["entity_id"]: s["state"] for s in states["states"]}["binary_sensor.doors_and_windows"] == "off"
+    assert ha.history_calls[1][1] == armed.isoformat()
+    assert archive.state.data["panel_cursor"] == armed.isoformat()
+
+
+async def test_daily_summary_and_supplement(tmp_path):
+    archive, ha, r2, _, clock = build(tmp_path)
+    archive.state.data["installed"] = "2026-10-30"
+    async with running(archive.follow_log(), archive.upload_loop()):
+        await ha.log_events.put(log_event((T1, "ALARM ausgelöst"), (T2, "Manuell entschärft")))
+        await settle(lambda: len(r2.objects) == 2 and not len(archive.queue))
+
+    # Before 00:05 of the next day only the day before gets its summary
+    clock.moment = datetime(2026, 10, 31, 23, 2, tzinfo=UTC)      # 00:02 in Berlin
+    assert archive._summary_days(datetime(2026, 11, 1).date()) == ["2026-10-30", "2026-10-31"]
+    assert await archive.summarize("2026-10-30")
+    assert "(keine Einträge)" in r2.objects["zusammenfassung/2026/10/2026-10-30.txt"].decode()
+
+    clock.moment = datetime(2026, 10, 31, 23, 6, tzinfo=UTC)
+    assert await archive.summarize("2026-10-31")
+    text = r2.objects["zusammenfassung/2026/10/2026-10-31.txt"].decode()
+    assert "31.10.2026 11:17:33 - ALARM ausgelöst" in text and "2 Einträge" in text
+    assert archive._summary_days(datetime(2026, 11, 1).date()) == []
+
+    # An entry for the 31st that arrives later goes into a supplement
+    late = T2 + 3600
+    archive._enqueue(*_log_args(late, "Nachgeholt"))
+    assert archive._summary_days(datetime(2026, 11, 1).date()) == []          # waits for the queue
+    async with running(archive.upload_loop()):
+        await settle(lambda: not len(archive.queue))
+    assert archive._summary_days(datetime(2026, 11, 1).date()) == ["2026-10-31"]
+    assert await archive.summarize("2026-10-31")
+    supplement = r2.objects["zusammenfassung/2026/10/2026-10-31-nachtrag-1.txt"].decode()
+    assert "Nachgeholt" in supplement and "ALARM" not in supplement and "1 Einträge" in supplement
+    assert archive.state.data["summaries"]["2026-10-31"]["files"] == 2
+
+
+async def test_summary_after_lost_state_does_not_overwrite(tmp_path):
+    archive, _, r2, _, _ = build(tmp_path)
+    r2.objects["zusammenfassung/2026/10/2026-10-30.txt"] = b"old"
+    assert await archive.summarize("2026-10-30")
+    assert r2.objects["zusammenfassung/2026/10/2026-10-30.txt"] == b"old"
+    assert "zusammenfassung/2026/10/2026-10-30-nachtrag-1.txt" in r2.objects
+
+
+async def test_summary_waits_for_the_guard(tmp_path):
+    archive, _, r2, _, _ = build(tmp_path, guard_usage=None)
+    assert not await archive.summarize("2026-10-30")
+    assert r2.calls == []
+
+
+async def test_rules_loop_reports(tmp_path):
+    archive, _, _, cf, _ = build(tmp_path)
+    async with running(archive.rules_loop()):
+        await settle(lambda: archive.rule_problems is not None)
+    status = archive.status()
+    assert status["bucket_rules"] is True
+    attributes = json.loads(status["bucket_rules/attributes"])
+    assert attributes["commands"] == [
+        "npx wrangler r2 bucket lifecycle add alarm-archive delete-snapshots snapshots/ --expire-days 365"]
+
+
+def _log_args(when, message):
+    from r2_archive import archive as a
+    entry = a.log_entry({"entity_id": LOG, "message": message, "when": when}, LOG)
+    key, day, body = a.log_object(entry, BERLIN)
+    return key, "log", day, body, "application/json"

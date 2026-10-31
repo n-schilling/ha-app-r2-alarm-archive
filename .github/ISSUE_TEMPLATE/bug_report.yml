@@ -1,0 +1,43 @@
+name: Bug report
+description: Something does not work as described
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected and what happened instead.
+    validations:
+      required: true
+  - type: input
+    id: app_version
+    attributes:
+      label: App version
+      placeholder: e.g. 1.2.0
+    validations:
+      required: true
+  - type: input
+    id: ha_version
+    attributes:
+      label: Home Assistant version
+      description: Core and OS, from Settings → About.
+      placeholder: e.g. Core 2026.10.1, OS 17.0
+    validations:
+      required: true
+  - type: dropdown
+    id: hardware
+    attributes:
+      label: Hardware
+      options:
+        - Raspberry Pi 5
+        - Raspberry Pi 4
+        - Other aarch64
+        - amd64 (PC, NUC, VM)
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: App log
+      description: From the app's Log tab. Remove passwords, host names and anything else private.
+      render: text

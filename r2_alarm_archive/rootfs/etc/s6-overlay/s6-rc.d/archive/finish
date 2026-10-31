@@ -1,0 +1,18 @@
+#!/command/with-contenv bashio
+# shellcheck shell=bash
+# ==============================================================================
+# Stops the container when the archive ends, so the Supervisor's watchdog can
+# restart the app; the archive itself retries lost connections
+# ==============================================================================
+exit_code_container=$(</run/s6-linux-init-container-results/exitcode)
+readonly exit_code_container
+readonly exit_code_service="${1}"
+readonly exit_code_signal="${2}"
+bashio::log.info "Archive exited with ${exit_code_service} (signal ${exit_code_signal})"
+if [[ "${exit_code_service}" -eq 256 ]]; then
+    [[ "${exit_code_container}" -eq 0 ]] && echo $((128 + exit_code_signal)) > /run/s6-linux-init-container-results/exitcode
+    [[ "${exit_code_signal}" -eq 15 ]] && exec /run/s6/basedir/bin/halt
+elif [[ "${exit_code_service}" -ne 0 ]]; then
+    [[ "${exit_code_container}" -eq 0 ]] && echo "${exit_code_service}" > /run/s6-linux-init-container-results/exitcode
+    exec /run/s6/basedir/bin/halt
+fi

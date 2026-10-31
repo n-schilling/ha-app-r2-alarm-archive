@@ -1,0 +1,420 @@
+"""The archive: follows the alarm log and the alarm panel in Home Assistant,
+queues what belongs in the bucket, uploads it past the free tier guard and
+writes the daily summaries.
+
+Everything that must reach R2 goes through the queue in /data first, so an
+outage of R2 or of the network loses nothing. The log stream resumes where
+the last queued entry was; panel changes the app missed are rebuilt from
+the recorder.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import json
+import logging
+from collections.abc import Callable
+from datetime import UTC, date, datetime, time, timedelta
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from . import archive as a
+from .cloudflare import Cloudflare, CloudflareError
+from .config import Config
+from .guard import LIMITS, Guard, utc_month
+from .ha import HA, HAError
+from .r2 import R2, R2AuthError, R2Error
+from .store import Queue, State
+
+LOGGER = logging.getLogger(__name__)
+
+# Retry delays after errors, in seconds
+BACKOFF = (5, 15, 60, 300)
+USAGE_INTERVAL = 15 * 60
+RULES_INTERVAL = 24 * 3600
+SUMMARY_AT = time(0, 5)
+# The first start reads the log this far back; the recorder keeps less
+FIRST_START_DAYS = 400
+GROUP_DEPTH = 3
+
+
+def iso(moment: datetime) -> str:
+    return moment.astimezone(UTC).isoformat()
+
+
+class Archive:
+    def __init__(self, cfg: Config, ha: HA, r2: R2, cloudflare: Cloudflare | None, queue: Queue,
+                 state: State, clock: Callable[[], datetime] = lambda: datetime.now(UTC)) -> None:
+        self.cfg = cfg
+        self.ha = ha
+        self.r2 = r2
+        self.cloudflare = cloudflare
+        self.queue = queue
+        self.state = state
+        self.now = clock
+        self.guard = Guard(enabled=cfg.free_tier_guard)
+        self.tz: ZoneInfo | None = None
+        self.r2_connected: bool | None = None
+        self.rule_problems: list[str] | None = None
+        self.changed = asyncio.Event()       # a status value changed
+        self._wake = asyncio.Event()         # the queue has something new
+        self._ready = asyncio.Event()        # the time zone is known
+
+    # --- Status ---------------------------------------------------------------
+    def status(self) -> dict[str, object]:
+        loop_now = asyncio.get_running_loop().time()
+        month = utc_month(self.now())
+        percent = self.guard.percent()
+        rules: dict[str, object] = {"problems": self.rule_problems or []}
+        if self.rule_problems:
+            rules["commands"] = a.rule_commands(self.cfg.bucket, self.cfg.retention, self.cfg.lock)
+        return {
+            "r2_connection": self.r2_connected,
+            "queue": len(self.queue),
+            "last_upload": self.state.data["last_upload"],
+            "last_summary": self.state.data["last_summary"],
+            "free_tier_usage": max(percent.values()) if percent else None,
+            "free_tier_usage/attributes": json.dumps({"percent": percent, "limits": LIMITS,
+                                                      "guard": self.cfg.free_tier_guard}),
+            "free_tier_limit": self.guard.limit_reached(loop_now, month),
+            "bucket_rules": None if self.rule_problems is None else bool(self.rule_problems),
+            "bucket_rules/attributes": json.dumps(rules),
+        }
+
+    def _changed(self) -> None:
+        self.changed.set()
+
+    def _set_r2(self, connected: bool) -> None:
+        if self.r2_connected != connected:
+            self.r2_connected = connected
+            self._changed()
+
+    # --- Queue ------------------------------------------------------------------
+    def _done(self, day: str, key: str) -> bool:
+        return key in self.state.data["uploaded"].get(day, []) or key in self.queue
+
+    def _enqueue(self, key: str, kind: str, day: str, body: bytes, content_type: str) -> None:
+        if not self._done(day, key) and self.queue.add(key, kind, day, body, content_type):
+            self._wake.set()
+            self._changed()
+
+    async def upload_loop(self) -> None:
+        failures = 0
+        while True:
+            items = self.queue.items()
+            if not items:
+                self._wake.clear()
+                await self._wake.wait()
+                continue
+            item = items[0]
+            loop_now = asyncio.get_running_loop().time()
+            if not self.guard.allows(loop_now, utc_month(self.now()), class_a=1, storage=item.size):
+                self._changed()
+                await self._sleep_or_wake(60)
+                continue
+            try:
+                created = await self.r2.put_once(item.key, self.queue.body(item), item.content_type)
+            except R2Error as err:
+                self._set_r2(not err.unreachable)
+                delay = BACKOFF[min(failures, len(BACKOFF) - 1)]
+                failures += 1
+                level = logging.WARNING if err.unreachable or failures <= 1 else logging.ERROR
+                if isinstance(err, R2AuthError):
+                    level = logging.ERROR
+                LOGGER.log(level, "Upload of %s failed: %s; again in %d s", item.key, err, delay)
+                await asyncio.sleep(delay)
+                continue
+            failures = 0
+            self._set_r2(True)
+            self.guard.count(class_a=1, storage=item.size if created else 0)
+            self.state.uploaded(item.day, item.key)
+            self.state.data["last_upload"] = iso(self.now())
+            self.state.save()
+            self.queue.done(item)
+            LOGGER.debug("%s %s", "Uploaded" if created else "Already in R2:", item.key)
+            self._changed()
+
+    async def _sleep_or_wake(self, seconds: float) -> None:
+        with contextlib.suppress(TimeoutError):
+            async with asyncio.timeout(seconds):
+                self._wake.clear()
+                await self._wake.wait()
+
+    # --- Home Assistant -----------------------------------------------------------
+    async def ha_loop(self) -> None:
+        failures = 0
+        while True:
+            try:
+                await self.ha.connect()
+                failures = 0
+                config = await self.ha.config()
+                try:
+                    self.tz = ZoneInfo(config.get("time_zone") or "UTC")
+                except ZoneInfoNotFoundError:
+                    LOGGER.warning("Unknown time zone %s; using UTC", config.get("time_zone"))
+                    self.tz = ZoneInfo("UTC")
+                if not self.state.data["installed"]:
+                    self.state.data["installed"] = self.now().astimezone(self.tz).date().isoformat()
+                    self.state.save()
+                self._ready.set()
+                LOGGER.info("Connected to Home Assistant, time zone %s", self.tz.key)
+                async with asyncio.TaskGroup() as tasks:
+                    tasks.create_task(self.follow_log())
+                    if self.cfg.alarm_panel:
+                        tasks.create_task(self.follow_panel())
+                    tasks.create_task(self.ha.wait_closed())
+            except* HAError as group:
+                LOGGER.warning("Home Assistant: %s; connecting again in %d s", group.exceptions[0],
+                               BACKOFF[min(failures, len(BACKOFF) - 1)])
+            finally:
+                await self.ha.close()
+            await asyncio.sleep(BACKOFF[min(failures, len(BACKOFF) - 1)])
+            failures += 1
+
+    async def follow_log(self) -> None:
+        cursor = self.state.data["log_cursor"]
+        start = (datetime.fromtimestamp(cursor - 1, UTC) if cursor is not None
+                 else self.now() - timedelta(days=FIRST_START_DAYS))
+        LOGGER.info("Reading the log of %s from %s", self.cfg.log_entity, iso(start))
+        async for event in self.ha.logbook(self.cfg.log_entity, iso(start)):
+            newest = self.state.data["log_cursor"]
+            for raw in event.get("events") or []:
+                entry = a.log_entry(raw, self.cfg.log_entity)
+                if entry is None:
+                    continue
+                key, day, body = a.log_object(entry, self.tz)
+                self._enqueue(key, "log", day, body, "application/json")
+                newest = entry["when"] if newest is None else max(newest, entry["when"])
+            if newest != self.state.data["log_cursor"]:
+                self.state.data["log_cursor"] = newest
+                self.state.save()
+
+    async def follow_panel(self) -> None:
+        panel = self.cfg.alarm_panel
+        if self.state.data["panel_cursor"] is None:
+            # Snapshots start with the first start, nothing is rebuilt before it
+            self.state.data["panel_cursor"] = iso(self.now())
+            self.state.save()
+        else:
+            await self.catch_up_panel()
+        # A change between the catch-up and the subscription is rebuilt at the
+        # next start: the cursor only moves with changes handled
+        async for event in self.ha.panel_changes(panel):
+            trigger = (event.get("variables") or {}).get("trigger") or {}
+            old, new = trigger.get("from_state") or {}, trigger.get("to_state") or {}
+            if not new or new.get("state") == old.get("state"):
+                continue
+            moment = datetime.fromisoformat(new["last_changed"])
+            if new["state"] in self.cfg.snapshot_states:
+                await self.snapshot(moment, old.get("state"), new["state"], new.get("attributes") or {},
+                                    (new.get("context") or {}).get("user_id"), reconstructed=False)
+            self._panel_cursor(moment)
+
+    def _panel_cursor(self, moment: datetime) -> None:
+        cursor = self.state.data["panel_cursor"]
+        if cursor is None or moment > datetime.fromisoformat(cursor):
+            self.state.data["panel_cursor"] = iso(moment)
+            self.state.save()
+
+    async def catch_up_panel(self) -> None:
+        panel = self.cfg.alarm_panel
+        start = self.state.data["panel_cursor"]
+        records = (await self.ha.history([panel], start)).get(panel) or []
+        previous = records[0].get("s") if records else None
+        for record in records[1:]:
+            state = record.get("s")
+            if state == previous:
+                continue
+            moment = datetime.fromtimestamp(float(record.get("lc") or record["lu"]), UTC)
+            if state in self.cfg.snapshot_states:
+                LOGGER.info("Rebuilding the snapshot of %s at %s", state, iso(moment))
+                await self.snapshot(moment, previous, state, record.get("a") or {}, None,
+                                    reconstructed=True)
+            self._panel_cursor(moment)
+            previous = state
+
+    async def _entities(self, states: list[dict]) -> list[str]:
+        if self.cfg.snapshot_all_entities:
+            return sorted(s["entity_id"] for s in states)
+        by_id = {s["entity_id"]: s for s in states}
+        found: list[str] = []
+        todo = [(e, 0) for e in (self.cfg.alarm_panel, *self.cfg.snapshot_entities) if e]
+        while todo:
+            entity, depth = todo.pop(0)
+            if entity in found:
+                continue
+            found.append(entity)
+            members = (by_id.get(entity) or {}).get("attributes", {}).get("entity_id")
+            if isinstance(members, list) and depth < GROUP_DEPTH:
+                todo += [(m, depth + 1) for m in members if isinstance(m, str)]
+        return found
+
+    async def snapshot(self, moment: datetime, old: str | None, new: str, attributes: dict,
+                       user_id: str | None, reconstructed: bool) -> None:
+        folder, day = a.snapshot_folder(moment, new, self.tz)
+        if self._done(day, folder + "meta.json"):
+            return
+        current = await self.ha.states()
+        entities = await self._entities(current)
+        if reconstructed:
+            history = await self.ha.history(entities, iso(moment), iso(moment + timedelta(milliseconds=1)))
+            states = []
+            for entity in entities:
+                first = (history.get(entity) or [None])[0]
+                if first:
+                    changed = first.get("lc") or first.get("lu")
+                    states.append({"entity_id": entity, "state": first.get("s"),
+                                   "attributes": first.get("a") or {},
+                                   "last_changed": iso(datetime.fromtimestamp(float(changed), UTC))
+                                   if changed else None})
+        else:
+            wanted = set(entities)
+            states = [{"entity_id": s["entity_id"], "state": s.get("state"),
+                       "attributes": s.get("attributes") or {}, "last_changed": s.get("last_changed")}
+                      for s in current if s["entity_id"] in wanted]
+        pictures: dict[str, str | None] = {}
+        for camera in self.cfg.cameras:
+            name = a.camera_file(camera)
+            if reconstructed:
+                pictures[camera] = None
+                continue
+            try:
+                picture = await self.ha.camera(camera)
+            except HAError as err:
+                LOGGER.warning("No picture for the snapshot: %s", err)
+                pictures[camera] = None
+                continue
+            self._enqueue(folder + name, "snapshots", day, picture, "image/jpeg")
+            pictures[camera] = name
+        self._enqueue(folder + "zustand.json.gz", "snapshots", day,
+                      a.states_body(moment, states, reconstructed), "application/gzip")
+        self._enqueue(folder + "meta.json", "snapshots", day,
+                      a.meta_body(moment, self.cfg.alarm_panel, old, new, attributes, user_id,
+                                  pictures, reconstructed), "application/json")
+        LOGGER.info("Snapshot %s queued (%d states, %d pictures)", folder, len(states),
+                    sum(1 for p in pictures.values() if p))
+
+    # --- Free tier guard and bucket rules -------------------------------------------
+    async def usage_loop(self) -> None:
+        if self.cloudflare is None:
+            return
+        while True:
+            now = self.now()
+            try:
+                usage = await self.cloudflare.usage(now)
+            except CloudflareError as err:
+                LOGGER.warning("R2 usage not read: %s", err)
+            else:
+                self.guard.update(usage, asyncio.get_running_loop().time(), utc_month(now))
+                LOGGER.debug("R2 usage: %s", usage)
+                self._wake.set()
+            self._changed()
+            await asyncio.sleep(USAGE_INTERVAL)
+
+    async def rules_loop(self) -> None:
+        if self.cloudflare is None:
+            if any(v is not None for v in (*self.cfg.retention.values(), *self.cfg.lock.values())):
+                LOGGER.warning("Without api_token the bucket's lifecycle and lock rules are not checked")
+            return
+        while True:
+            try:
+                lifecycle = await self.cloudflare.lifecycle_rules()
+                locks = await self.cloudflare.lock_rules()
+            except CloudflareError as err:
+                LOGGER.warning("Bucket rules not read: %s", err)
+                problems = None
+            else:
+                problems = a.rule_problems(lifecycle, locks, self.cfg.retention, self.cfg.lock)
+                for problem in problems:
+                    LOGGER.warning("Bucket rules: %s", problem)
+                if problems:
+                    LOGGER.warning("To match the options: %s",
+                                   "; ".join(a.rule_commands(self.cfg.bucket, self.cfg.retention,
+                                                             self.cfg.lock)))
+            if problems != self.rule_problems:
+                self.rule_problems = problems
+                self._changed()
+            await asyncio.sleep(RULES_INTERVAL if problems is not None else 900)
+
+    # --- Daily summary ------------------------------------------------------------------
+    def _summary_days(self, today: date) -> list[str]:
+        """Days before today that need a summary or a supplement."""
+        days = set()
+        installed = self.state.data["installed"]
+        if installed:
+            day = date.fromisoformat(installed)
+            while day < today:
+                days.add(day.isoformat())
+                day += timedelta(days=1)
+        days |= {d for d in self.state.data["uploaded"] if date.fromisoformat(d) < today}
+        waiting = self.queue.days()
+        out = []
+        for day in sorted(days):
+            done = self.state.data["summaries"].get(day)
+            uploaded = set(self.state.data["uploaded"].get(day, []))
+            if day in waiting:
+                continue
+            if done is None or not uploaded <= set(done["covered"]):
+                out.append(day)
+        return out
+
+    async def summary_loop(self) -> None:
+        await self._ready.wait()
+        while True:
+            local = self.now().astimezone(self.tz)
+            today = local.date()
+            for day in self._summary_days(today):
+                after = datetime.combine(date.fromisoformat(day) + timedelta(days=1), SUMMARY_AT, self.tz)
+                if local < after:
+                    continue
+                try:
+                    await self.summarize(day)
+                except R2Error as err:
+                    self._set_r2(not err.unreachable)
+                    LOGGER.warning("Summary of %s not written: %s", day, err)
+                    break
+            await asyncio.sleep(60)
+
+    async def summarize(self, day: str) -> bool:
+        """Writes the summary of a day, or a supplement with what came later.
+        False when the guard held it back."""
+        month = utc_month(self.now())
+        loop = asyncio.get_running_loop()
+        if not self.guard.allows(loop.time(), month, class_a=2):
+            return False
+        folder = a.day_folder(day)
+        log_keys = await self.r2.list(a.PREFIX["log"] + folder)
+        snapshot_keys = await self.r2.list(a.PREFIX["snapshots"] + folder)
+        self.guard.count(class_a=2)
+        self._set_r2(True)
+        done = self.state.data["summaries"].get(day) or {"covered": [], "files": 0}
+        covered = set(done["covered"])
+        new_logs = [k for k in log_keys if k not in covered]
+        new_folders = sorted({k.rsplit("/", 1)[0] + "/" for k in snapshot_keys} - covered)
+        all_covered = sorted(covered | set(log_keys) | set(snapshot_keys) | set(new_folders)
+                             | set(self.state.data["uploaded"].get(day, [])))
+        if done["files"] and not new_logs and not new_folders:
+            done["covered"] = all_covered
+            self.state.data["summaries"][day] = done
+            self.state.save()
+            return True
+        if not self.guard.allows(loop.time(), month, class_b=len(new_logs)):
+            return False
+        entries = [(key, await self.r2.get(key)) for key in new_logs]
+        self.guard.count(class_b=len(new_logs))
+        part = done["files"]
+        while True:
+            body = a.summary_text(day, entries, new_folders, self.tz, part, self.now())
+            if not self.guard.allows(loop.time(), month, class_a=1, storage=len(body)):
+                return False
+            created = await self.r2.put_once(a.summary_key(day, part), body, "text/plain; charset=utf-8")
+            self.guard.count(class_a=1, storage=len(body) if created else 0)
+            if created:
+                break
+            part += 1      # the file is there already, e.g. after /data was lost
+        self.state.data["summaries"][day] = {"covered": all_covered, "files": part + 1}
+        self.state.data["last_summary"] = iso(self.now())
+        self.state.save()
+        LOGGER.info("Summary %s written (%d entries)", a.summary_key(day, part), len(entries))
+        self._changed()
+        return True

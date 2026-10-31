@@ -1,0 +1,7 @@
+#!/command/with-contenv bashio
+# shellcheck shell=bash
+# ==============================================================================
+# Runs the R2 alarm archive
+# ==============================================================================
+export PYTHONPATH=/usr/lib
+exec python3 -m r2_archive

@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: App configuration
+        uses: frenck/action-addon-linter@b9cfd1bc62ba60d2c4fc96317b5f7ada5923f4a7 # v2.21.1
+        with:
+          path: ./r2_alarm_archive
+      - name: Changelog has the version
+        run: .github/scripts/changelog-section.sh r2_alarm_archive/CHANGELOG.md "$(yq -r '.version' r2_alarm_archive/config.yaml)" > /dev/null
+      - name: Shell scripts
+        run: >-
+          shellcheck --shell=bash --severity=warning
+          r2_alarm_archive/rootfs/etc/s6-overlay/s6-rc.d/archive/run
+          r2_alarm_archive/rootfs/etc/s6-overlay/s6-rc.d/archive/finish
+
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+      - name: Install
+        run: pip install -r r2_alarm_archive/requirements.txt pytest==9.1.1 pytest-aiohttp==1.1.1 ruff==0.17.3
+      - name: Ruff
+        run: ruff check r2_alarm_archive/rootfs/usr/lib/r2_archive tests
+      - name: Test
+        run: pytest -v
+
+  image:
+    name: Build and start (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+          - arch: aarch64
+            platform: linux/arm64
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build
+        env:
+          ARCH: ${{ matrix.arch }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          version=$(yq -r '.version' r2_alarm_archive/config.yaml)
+          docker buildx build --platform "${PLATFORM}" \
+            --build-arg "BUILD_VERSION=${version}" --load -t r2-alarm-archive:test r2_alarm_archive
+      - name: Start without options
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        # The archive loads, finds no options and says what to set
+        run: |
+          out=$(docker run --rm --network none --platform "${PLATFORM}" -e PYTHONPATH=/usr/lib \
+            --entrypoint python3 r2-alarm-archive:test -m r2_archive 2>&1 || true)
+          echo "${out}"
+          grep -q '/data/options.json not readable' <<< "${out}"

@@ -1,0 +1,25 @@
+#include <tunables/global>
+
+# Talks to Home Assistant, Cloudflare and the MQTT broker; writes its queue
+# and state to /data
+profile r2_alarm_archive flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+
+  capability chown,
+  capability dac_override,
+  capability fowner,
+  capability kill,
+  capability setgid,
+  capability setuid,
+
+  network inet,
+  network inet6,
+  network unix,
+
+  # s6 stops its services; the Supervisor stops the container
+  signal (send, receive),
+
+  file,
+  deny /proc/sys/** w,
+  deny /sys/** w,
+}

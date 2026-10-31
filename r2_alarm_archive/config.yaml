@@ -1,0 +1,70 @@
+name: R2 Alarm Archive
+version: "0.1.0"
+slug: r2_alarm_archive
+description: Archives the alarm log and snapshots of your Home Assistant alarm panel in a Cloudflare R2 bucket
+url: https://github.com/n-schilling/ha-app-r2-alarm-archive
+arch:
+  - aarch64
+  - amd64
+init: false
+homeassistant_api: true
+services:
+  - mqtt:want
+options:
+  account_id: ""
+  bucket: ""
+  jurisdiction: default
+  access_key_id: ""
+  secret_access_key: ""
+  api_token: ""
+  free_tier_guard: true
+  log_entity: ""
+  alarm_panel: ""
+  snapshot_states:
+    - armed_home
+    - armed_away
+    - armed_night
+    - armed_vacation
+    - armed_custom_bypass
+    - triggered
+    - disarmed
+  snapshot_entities: []
+  snapshot_all_entities: false
+  cameras: []
+  retention_log: unlimited
+  retention_snapshots: "365"
+  retention_summaries: unlimited
+  lock_log: "off"
+  lock_snapshots: "off"
+  lock_summaries: "off"
+  discovery_prefix: homeassistant
+  log_level: info
+schema:
+  account_id: str
+  bucket: str
+  jurisdiction: list(default|eu)
+  access_key_id: str
+  secret_access_key: password
+  api_token: password?
+  free_tier_guard: bool
+  log_entity: str
+  alarm_panel: str?
+  snapshot_states:
+    - list(armed_home|armed_away|armed_night|armed_vacation|armed_custom_bypass|arming|pending|triggered|disarmed)
+  snapshot_entities:
+    - str
+  snapshot_all_entities: bool
+  cameras:
+    - str
+  retention_log: match(^(unlimited|[1-9][0-9]{0,4})$)
+  retention_snapshots: match(^(unlimited|[1-9][0-9]{0,4})$)
+  retention_summaries: match(^(unlimited|[1-9][0-9]{0,4})$)
+  lock_log: match(^(off|indefinite|[1-9][0-9]{0,4})$)
+  lock_snapshots: match(^(off|indefinite|[1-9][0-9]{0,4})$)
+  lock_summaries: match(^(off|indefinite|[1-9][0-9]{0,4})$)
+  discovery_prefix: match(^[A-Za-z0-9_/-]+$)
+  mqtt_host: str?
+  mqtt_port: port?
+  mqtt_username: str?
+  mqtt_password: password?
+  log_level: list(info|warning|error)
