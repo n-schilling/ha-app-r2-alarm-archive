@@ -14,6 +14,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import time as clock_time
 from collections.abc import Callable
 from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -36,6 +37,10 @@ SUMMARY_AT = time(0, 5)
 # The first start reads the log this far back; the recorder keeps less
 FIRST_START_DAYS = 400
 GROUP_DEPTH = 3
+# Archiving counts as not working when an object waits longer than this, or
+# when a summary is this late
+STUCK_AFTER = 15 * 60
+SUMMARY_GRACE = timedelta(hours=1)
 
 
 def iso(moment: datetime) -> str:
@@ -55,12 +60,43 @@ class Archive:
         self.guard = Guard(enabled=cfg.free_tier_guard)
         self.tz: ZoneInfo | None = None
         self.r2_connected: bool | None = None
+        self.ha_connected = False
+        self.upload_error: str | None = None      # the last upload failed with this
         self.rule_problems: list[str] | None = None
         self.changed = asyncio.Event()       # a status value changed
         self._wake = asyncio.Event()         # the queue has something new
         self._ready = asyncio.Event()        # the time zone is known
 
     # --- Status ---------------------------------------------------------------
+    def health(self) -> list[str]:
+        """Why archiving does not work right now; empty while it does: Home
+        Assistant connected, uploads succeed, nothing waits too long, the
+        guard has a figure below the limit, no summary is overdue."""
+        reasons = []
+        if not self.ha_connected:
+            reasons.append("Home Assistant not connected")
+        if self.r2_connected is False:
+            reasons.append("R2 not reachable")
+        if self.upload_error:
+            reasons.append(f"last upload failed: {self.upload_error}")
+        oldest = self.queue.oldest()
+        if oldest is not None and clock_time.time() - oldest > STUCK_AFTER:
+            reasons.append(f"{len(self.queue)} objects waiting, the oldest for "
+                           f"{int((clock_time.time() - oldest) // 60)} min")
+        limit = self.guard.limit_reached(asyncio.get_running_loop().time(), utc_month(self.now()))
+        if limit:
+            reasons.append("free tier limit reached")
+        elif limit is None:
+            reasons.append("no R2 usage figure for the free tier guard")
+        if self.tz is not None:
+            local = self.now().astimezone(self.tz)
+            for day in self._summary_days(local.date()):
+                due = datetime.combine(date.fromisoformat(day) + timedelta(days=1), SUMMARY_AT, self.tz)
+                if local > due + SUMMARY_GRACE:
+                    reasons.append(f"summary of {day} missing")
+                    break
+        return reasons
+
     def status(self) -> dict[str, object]:
         loop_now = asyncio.get_running_loop().time()
         month = utc_month(self.now())
@@ -68,7 +104,10 @@ class Archive:
         rules: dict[str, object] = {"problems": self.rule_problems or []}
         if self.rule_problems:
             rules["commands"] = a.rule_commands(self.cfg.bucket, self.cfg.retention, self.cfg.lock)
+        reasons = self.health()
         return {
+            "archiving": not reasons,
+            "archiving/attributes": json.dumps({"problems": reasons}),
             "r2_connection": self.r2_connected,
             "queue": len(self.queue),
             "last_upload": self.state.data["last_upload"],
@@ -116,6 +155,8 @@ class Archive:
                 created = await self.r2.put_once(item.key, self.queue.body(item), item.content_type)
             except R2Error as err:
                 self._set_r2(not err.unreachable)
+                self.upload_error = str(err)
+                self._changed()
                 delay = BACKOFF[min(failures, len(BACKOFF) - 1)]
                 failures += 1
                 level = logging.WARNING if err.unreachable or failures <= 1 else logging.ERROR
@@ -126,6 +167,7 @@ class Archive:
                 continue
             failures = 0
             self._set_r2(True)
+            self.upload_error = None
             self.guard.count(class_a=1, storage=item.size if created else 0)
             self.state.uploaded(item.day, item.key)
             self.state.data["last_upload"] = iso(self.now())
@@ -157,6 +199,8 @@ class Archive:
                     self.state.data["installed"] = self.now().astimezone(self.tz).date().isoformat()
                     self.state.save()
                 self._ready.set()
+                self.ha_connected = True
+                self._changed()
                 LOGGER.info("Connected to Home Assistant, time zone %s", self.tz.key)
                 async with asyncio.TaskGroup() as tasks:
                     tasks.create_task(self.follow_log())
@@ -167,6 +211,9 @@ class Archive:
                 LOGGER.warning("Home Assistant: %s; connecting again in %d s", group.exceptions[0],
                                BACKOFF[min(failures, len(BACKOFF) - 1)])
             finally:
+                if self.ha_connected:
+                    self.ha_connected = False
+                    self._changed()
                 await self.ha.close()
             await asyncio.sleep(BACKOFF[min(failures, len(BACKOFF) - 1)])
             failures += 1
@@ -309,7 +356,15 @@ class Archive:
                 LOGGER.debug("R2 usage: %s", usage)
                 self._wake.set()
             self._changed()
-            await asyncio.sleep(USAGE_INTERVAL)
+            await asyncio.sleep(self._next_usage_poll())
+
+    def _next_usage_poll(self) -> float:
+        """Every 15 minutes, and right after the month changes: last month's
+        figure no longer counts."""
+        now = self.now()
+        next_month = (now.replace(day=28) + timedelta(days=4)).replace(
+            day=1, hour=0, minute=0, second=0, microsecond=0)
+        return max(1.0, min(USAGE_INTERVAL, (next_month - now).total_seconds() + 5))
 
     async def rules_loop(self) -> None:
         if self.cloudflare is None:

@@ -76,6 +76,7 @@ One device *R2 Alarm Archive*:
 
 | Entity | Meaning |
 |---|---|
+| Archiving | **The one for dashboards.** On while archiving works; off with the reasons in its attribute `problems`: Home Assistant not connected, R2 not reachable, the last upload failed, an object waits longer than 15 minutes, the free tier limit is reached or no usage figure is there, a summary is more than an hour late |
 | R2 connection | Off only when R2 cannot be reached (network, R2 itself). An answer with an error, such as a refused key, counts as connected and goes to the log |
 | Queue | Objects waiting for R2 |
 | Last upload, Last summary | When R2 last confirmed an object, when the last summary was written |
@@ -85,7 +86,7 @@ One device *R2 Alarm Archive*:
 
 All entities are unavailable while the app is stopped.
 
-A useful automation: notify when *Queue* is above 0 for 30 minutes, or when *Free tier limit reached* turns on.
+For a dashboard, *Archiving* is enough, e.g. as a tile card. A useful automation: notify when *Archiving* has been off for 15 minutes, with its `problems` in the message.
 
 ## Troubleshooting
 

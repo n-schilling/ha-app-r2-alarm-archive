@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -33,6 +34,7 @@ class Item:
     day: str             # local date YYYY-MM-DD the object belongs to
     content_type: str
     size: int
+    queued: float        # epoch seconds when it was queued
 
 
 class Queue:
@@ -71,7 +73,8 @@ class Queue:
         seq = self._next
         self._next += 1
         write_atomic(self._folder / f"{seq:010d}.bin", body)
-        meta = {"key": key, "kind": kind, "day": day, "content_type": content_type, "size": len(body)}
+        meta = {"key": key, "kind": kind, "day": day, "content_type": content_type, "size": len(body),
+                "queued": time.time()}
         write_atomic(self._folder / f"{seq:010d}.json", json.dumps(meta).encode())
         self._items[seq] = Item(seq=seq, **meta)
         self._keys.add(key)
@@ -89,6 +92,10 @@ class Queue:
         (self._folder / f"{item.seq:010d}.bin").unlink(missing_ok=True)
         self._items.pop(item.seq, None)
         self._keys.discard(item.key)
+
+    def oldest(self) -> float | None:
+        """When the longest waiting object was queued."""
+        return min((item.queued for item in self._items.values()), default=None)
 
     def days(self) -> set[str]:
         return {item.day for item in self._items.values()}

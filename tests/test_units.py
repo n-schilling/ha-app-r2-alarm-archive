@@ -211,6 +211,8 @@ def test_queue_survives_a_restart(tmp_path):
     assert [i.key for i in Queue(tmp_path / "q").items()] == ["k2"]
     assert again.add("k3", "log", "2026-10-31", b"three", "text/plain")
     assert [i.seq for i in again.items()] == [2, 3]
+    assert again.oldest() == min(i.queued for i in again.items())
+    assert Queue(tmp_path / "empty").oldest() is None
 
 
 def test_state(tmp_path):
@@ -229,8 +231,9 @@ def test_discovery():
     payload = d.device_payload(d.Context("homeassistant", "0.1.0", None))
     assert d.device_topic("homeassistant") == "homeassistant/device/r2_alarm_archive/config"
     comps = payload["components"]
-    assert set(comps) == {"r2_connection", "queue", "last_upload", "last_summary", "free_tier_usage",
+    assert set(comps) == {"archiving", "r2_connection", "queue", "last_upload", "last_summary", "free_tier_usage",
                           "free_tier_limit", "bucket_rules"}
     assert all(c["unique_id"].startswith("r2_alarm_archive_") for c in comps.values())
     assert comps["r2_connection"]["device_class"] == "connectivity"
+    assert comps["archiving"]["device_class"] == "running"
     assert payload["availability"] == [{"topic": "r2_alarm_archive/availability"}]

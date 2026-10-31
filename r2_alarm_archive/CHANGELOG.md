@@ -2,6 +2,16 @@
 
 All notable changes to this app are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the app uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-10-31
+
+### Added
+
+- Entity *Archiving* for dashboards: on while archiving works, off with the reasons in its attribute `problems` (Home Assistant not connected, R2 not reachable, last upload failed, an object waiting longer than 15 minutes, free tier limit reached or no usage figure, a summary more than an hour late)
+
+### Changed
+
+- The free tier guard reads the usage right after the month changes, so uploads do not wait for the next 15-minute poll
+
 ## [0.1.0] - 2026-10-31
 
 ### Added

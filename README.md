@@ -72,23 +72,23 @@ Without `alarm_panel` the app archives the log only.
 
 ### 4. React to the status (recommended)
 
-The app reports through MQTT discovery whether R2 is reachable, how much waits in its queue and how close the account is to the free tier. A notification when something stays stuck:
+The app reports through MQTT discovery whether archiving works. For a dashboard one entity is enough: **Archiving** (`binary_sensor.r2_alarm_archive_archiving`) is on while the log reaches R2 and off when something is wrong; its attribute `problems` says what. The other entities (R2 connection, queue, last upload and summary, free tier usage) show the details.
+
+A notification when archiving stays broken:
 
 ```yaml
-alias: Alarm archive – not uploading
+alias: Alarm archive – not working
 triggers:
-  - trigger: numeric_state
-    entity_id: sensor.r2_alarm_archive_queue
-    above: 0
-    for: "00:30:00"
   - trigger: state
-    entity_id: binary_sensor.r2_alarm_archive_free_tier_limit_reached
-    to: "on"
+    entity_id: binary_sensor.r2_alarm_archive_archiving
+    to: "off"
+    for: "00:15:00"
 actions:
   - action: notify.notify
     data:
       title: Alarm archive
-      message: "{{ states('sensor.r2_alarm_archive_queue') }} objects are waiting for R2."
+      message: >-
+        {{ state_attr('binary_sensor.r2_alarm_archive_archiving', 'problems') | join(', ') }}
 mode: single
 ```
 

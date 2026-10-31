@@ -33,6 +33,10 @@ def _entity(platform: str, uid: str, name: str, **extra: Any) -> dict[str, Any]:
 def components() -> dict[str, dict]:
     on_off = {"payload_on": "ON", "payload_off": "OFF"}
     return {
+        # The one entity for dashboards: on while the log reaches R2
+        "archiving": _entity("binary_sensor", "archiving", "Archiving", device_class="running",
+                             state_topic=topic("archiving"),
+                             json_attributes_topic=topic("archiving/attributes"), **on_off),
         "r2_connection": _entity("binary_sensor", "r2_connection", "R2 connection",
                                  device_class="connectivity", state_topic=topic("r2_connection"),
                                  **on_off),

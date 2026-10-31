@@ -258,3 +258,59 @@ def _log_args(when, message):
     entry = a.log_entry({"entity_id": LOG, "message": message, "when": when}, LOG)
     key, day, body = a.log_object(entry, BERLIN)
     return key, "log", day, body, "application/json"
+
+
+async def test_health(tmp_path, monkeypatch):
+    archive, _, r2, _, clock = build(tmp_path)
+    archive.state.data["installed"] = "2026-10-31"
+    assert archive.health() == ["Home Assistant not connected"]
+    archive.ha_connected = True
+    status = archive.status()
+    assert status["archiving"] is True and json.loads(status["archiving/attributes"]) == {"problems": []}
+
+    # A failing upload shows at once, and clears with the next success
+    r2.fail = R2Error("PUT x: HTTP 403 AccessDenied", 403, "AccessDenied")
+    archive._enqueue("protokoll/2026/10/31/x.json", "log", "2026-10-31", b"x", "application/json")
+    async with running(archive.upload_loop()):
+        await settle(lambda: archive.upload_error is not None)
+        assert archive.status()["archiving"] is False
+        assert archive.health() == ["last upload failed: PUT x: HTTP 403 AccessDenied"]
+        r2.fail = None
+        await settle(lambda: not len(archive.queue))
+    assert archive.health() == []
+
+    # Something waiting longer than 15 minutes
+    archive._enqueue("protokoll/2026/10/31/y.json", "log", "2026-10-31", b"y", "application/json")
+    queued = archive.queue.oldest()
+    monkeypatch.setattr(app_module.clock_time, "time", lambda: queued + 16 * 60)
+    assert archive.health() == ["1 objects waiting, the oldest for 16 min"]
+    monkeypatch.setattr(app_module.clock_time, "time", lambda: queued)
+    archive.queue.done(archive.queue.items()[0])
+
+    # The guard at its limit, or without a figure
+    archive.guard.update(Usage(900_000, 0, 0), asyncio.get_running_loop().time(), (2026, 10))
+    assert archive.health() == ["free tier limit reached"]
+    archive.guard.usage = None
+    assert archive.health() == ["no R2 usage figure for the free tier guard"]
+    archive.guard.update(Usage(0, 0, 0), asyncio.get_running_loop().time(), (2026, 10))
+
+    # The summary of the 31st is due at 00:05 and late after 01:05 (Berlin)
+    # (a new month needs a new usage figure)
+    clock.moment = datetime(2026, 11, 1, 0, 0, tzinfo=UTC)
+    assert archive.health() == ["no R2 usage figure for the free tier guard"]
+    archive.guard.update(Usage(0, 0, 0), asyncio.get_running_loop().time(), (2026, 11))
+    assert archive.health() == []
+    clock.moment = datetime(2026, 11, 1, 0, 10, tzinfo=UTC)
+    assert archive.health() == ["summary of 2026-10-31 missing"]
+    assert await archive.summarize("2026-10-31")
+    assert archive.health() == []
+
+
+async def test_usage_poll_at_the_month_change(tmp_path):
+    archive, _, _, _, clock = build(tmp_path)
+    clock.moment = datetime(2026, 10, 31, 23, 55, tzinfo=UTC)
+    assert archive._next_usage_poll() == 305
+    clock.moment = datetime(2026, 12, 31, 23, 59, 59, tzinfo=UTC)
+    assert archive._next_usage_poll() == 6
+    clock.moment = datetime(2026, 11, 1, 0, 0, 5, tzinfo=UTC)
+    assert archive._next_usage_poll() == 900
