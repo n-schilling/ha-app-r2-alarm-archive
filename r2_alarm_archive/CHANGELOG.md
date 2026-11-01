@@ -2,6 +2,12 @@
 
 All notable changes to this app are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the app uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-11-01
+
+### Fixed
+
+- Web page: snapshots in a day's list show their full state (`armed_night` showed as `night`); panel states, the user's name and numbers in German appear as such; times no longer wrap, pictures stand side by side; the R2 connection reads "not used since the start" instead of "unknown" right after a start
+
 ## [0.4.0] - 2026-11-01
 
 ### Added

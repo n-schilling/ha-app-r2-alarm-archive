@@ -30,6 +30,8 @@ def seeded(tmp_path, usage=USAGE):
                       State(tmp_path / "state.json"), Clock(datetime(2026, 11, 1, 9, 0, tzinfo=UTC)))
     archive.tz, archive.language, archive.ha_connected, archive.r2_connected = BERLIN, "de", True, True
     archive.rule_problems = []
+    archive.ha.state_list = [{"entity_id": "person.kim", "state": "home",
+                              "attributes": {"user_id": "u1", "friendly_name": "Kim"}}]
     archive.guard.update(usage, asyncio.get_running_loop().time(), (2026, 11))
     for when, message in ((datetime(2026, 10, 31, 10, 17, 44, tzinfo=UTC), "Manuell entschärft"),
                           (datetime(2026, 10, 31, 10, 17, 33, tzinfo=UTC), "ALARM <ausgelöst>")):
@@ -37,7 +39,7 @@ def seeded(tmp_path, usage=USAGE):
         key, day, body = a.log_object(entry, BERLIN)
         r2.objects[key] = body
         archive.state.uploaded(day, key)
-    meta = {"time": "2026-10-31T10:17:33+00:00", "from": "armed_night", "to": "triggered", "user_id": None,
+    meta = {"time": "2026-10-31T10:17:33+00:00", "from": "armed_night", "to": "triggered", "user_id": "u1",
             "cameras": {"camera.front": "kamera_front.jpg"}, "missing_cameras": ["camera.back"],
             "reconstructed": False}
     states = {"states": [{"entity_id": "binary_sensor.window_a", "state": "on",
@@ -68,7 +70,7 @@ async def test_overview(client):
     c, archive, _ = client
     page = await text(c, "/", {"X-Ingress-Path": "/api/hassio_ingress/abc"})
     assert "Archivierung läuft" in page and 'href="/api/hassio_ingress/abc/days"' in page
-    assert "1.234" in page and "900.000" in page and "7.0 MB" in page and "2.0 MB" in page
+    assert "1.234" in page and "900.000" in page and "7,0 MB" in page and "2,0 MB" in page and "0,12 %" in page
     assert "Lifecycle- und Lock-Regeln passen" in page
     archive.language = "en"
     archive.r2_connected = False
@@ -83,7 +85,7 @@ async def test_days_and_day(client):
     # Sorted by time, escaped, in local time
     assert day.index("11:17:33") < day.index("11:17:44")
     assert "ALARM &lt;ausgelöst&gt;" in day and "<ausgelöst>" not in day
-    assert f"/snapshot/{DAY}/20261031T101733.000000Z_triggered" in day
+    assert f"/snapshot/{DAY}/20261031T101733.000000Z_triggered" in day and "· ALARM</a>" in day
     assert "2026-10-31.txt?download=1" in day
     assert (await c.get("/day/kaputt")).status == 404
 
@@ -91,7 +93,8 @@ async def test_days_and_day(client):
 async def test_snapshot(client):
     c, _, _ = client
     page = await text(c, f"/snapshot/{DAY}/20261031T101733.000000Z_triggered")
-    assert "armed_night → triggered" in page and "Window A" in page and "binary_sensor.window_a" in page
+    assert "Nacht scharf → ALARM" in page and "Window A" in page and "binary_sensor.window_a" in page
+    assert "<td>Kim</td>" in page
     assert f'src="/file/{FOLDER}/kamera_front.jpg"' in page and "camera.back" in page
     assert (await c.get(f"/snapshot/{DAY}/gibt_es_nicht")).status == 404
 

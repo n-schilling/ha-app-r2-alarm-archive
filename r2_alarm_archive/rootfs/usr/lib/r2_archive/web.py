@@ -42,7 +42,7 @@ TEXT = {
         "title": "Alarm archive", "overview": "Overview", "days": "Days", "queue": "Queue",
         "status": "Status", "working": "Archiving works", "broken": "Archiving does not work",
         "stopped": "The app does not run", "r2": "R2 connection", "reachable": "reachable",
-        "unreachable": "not reachable", "unknown": "unknown", "waiting": "Waiting objects",
+        "unreachable": "not reachable", "unknown": "not used since the start", "waiting": "Waiting objects",
         "last_upload": "Last upload", "last_summary": "Last summary", "free_tier": "Free tier (whole account)",
         "account": "Account", "bucket": "This bucket", "free": "Free tier",
         "guard_limit": "Guard stops at", "month_end": "End of month (projected)", "storage": "Storage",
@@ -64,7 +64,7 @@ TEXT = {
         "title": "Alarm-Archiv", "overview": "Übersicht", "days": "Tage", "queue": "Warteschlange",
         "status": "Status", "working": "Archivierung läuft", "broken": "Archivierung gestört",
         "stopped": "Die App läuft nicht", "r2": "R2-Verbindung", "reachable": "erreichbar",
-        "unreachable": "nicht erreichbar", "unknown": "unbekannt", "waiting": "Wartende Objekte",
+        "unreachable": "nicht erreichbar", "unknown": "seit dem Start noch nicht benutzt", "waiting": "Wartende Objekte",
         "last_upload": "Letzter Upload", "last_summary": "Letzte Zusammenfassung",
         "free_tier": "Free-Tier (ganzes Konto)", "account": "Konto", "bucket": "Dieser Bucket",
         "free": "Free-Tier", "guard_limit": "Wächter stoppt bei", "month_end": "Monatsende (hochgerechnet)",
@@ -85,6 +85,17 @@ TEXT = {
         "not_cached": "(nicht im Zwischenspeicher)", "user": "Benutzer",
         "no_days": "Noch nichts archiviert.", "problems": "Probleme",
     },
+}
+
+PANEL_STATES = {
+    "en": {"disarmed": "disarmed", "armed_home": "armed home", "armed_away": "armed away",
+           "armed_night": "armed night", "armed_vacation": "armed vacation",
+           "armed_custom_bypass": "armed custom bypass", "arming": "arming", "pending": "pending",
+           "triggered": "ALARM"},
+    "de": {"disarmed": "Unscharf", "armed_home": "Zuhause scharf", "armed_away": "Abwesend scharf",
+           "armed_night": "Nacht scharf", "armed_vacation": "Urlaub scharf",
+           "armed_custom_bypass": "Benutzerdefiniert scharf", "arming": "Wird scharf",
+           "pending": "Eingangsverzögerung", "triggered": "ALARM"},
 }
 
 # The app's problem texts (see Archive.health) in German
@@ -114,18 +125,24 @@ table { border-collapse: collapse; width: 100%; } th, td { text-align: left; pad
   border-bottom: 1px solid var(--line); vertical-align: top; } th { color: var(--muted); font-weight: 500; }
 td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
 .ok { color: var(--ok); } .bad { color: var(--bad); } .muted { color: var(--muted); }
-.pics { display: flex; flex-wrap: wrap; gap: 12px; } .pics img { max-width: 100%; width: 460px;
-  border-radius: 8px; }
+.pics { display: flex; flex-wrap: wrap; gap: 12px; } .pics figure { margin: 0; flex: 1 1 400px; }
+.pics img { width: 100%; border-radius: 8px; } td.t { white-space: nowrap; }
 pre { white-space: pre-wrap; margin: 0; }
 """
 
 
-def size_text(n: float) -> str:
+def size_text(n: float, lang: str = "en") -> str:
     for unit in ("B", "KB", "MB", "GB"):
         if n < 1000 or unit == "GB":
-            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+            text = f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+            return text.replace(".", ",") if lang == "de" else text
         n /= 1000
     return f"{n:.1f} GB"
+
+
+def percent(n: float, lang: str) -> str:
+    text = f"{n:.2f} %"
+    return text.replace(".", ",") if lang == "de" else text
 
 
 def number(n: float, lang: str) -> str:
@@ -235,6 +252,22 @@ class Web:
         local = moment.astimezone(self.tz) if self.tz else moment
         return local.strftime("%d.%m.%Y %H:%M:%S" if self.lang == "de" else "%Y-%m-%d %H:%M:%S")
 
+    def panel_state(self, state) -> str:
+        return PANEL_STATES[self.lang].get(str(state), str(state))
+
+    async def user_name(self, user_id: str | None) -> str:
+        """The person of a Home Assistant user, else the ID."""
+        if not user_id:
+            return "–"
+        try:
+            for state in await self.archive.ha.states():
+                if state["entity_id"].startswith("person.") and \
+                        (state.get("attributes") or {}).get("user_id") == user_id:
+                    return str(state["attributes"].get("friendly_name") or state["entity_id"])
+        except Exception as err:  # the page still shows the ID
+            LOGGER.debug("No person for %s: %s", user_id, err)
+        return user_id
+
     def day_text(self, day: str) -> str:
         d = date.fromisoformat(day)
         return d.strftime("%d.%m.%Y") if self.lang == "de" else day
@@ -317,19 +350,19 @@ class Web:
             value = totals[key]
             rows.append(f"<tr><th>{self.t(name)}</th><td class='n'>{number(value, lang)}</td>"
                         f"<td class='n'>{number(own, lang)}</td><td class='n'>{number(free, lang)}</td>"
-                        f"<td class='n'>{100 * value / free:.2f} %</td><td class='n'>{number(LIMITS[key], lang)}</td>"
+                        f"<td class='n'>{percent(100 * value / free, lang)}</td><td class='n'>{number(LIMITS[key], lang)}</td>"
                         f"<td class='n'>{number(value / elapsed, lang)}</td></tr>")
         storage = totals["storage"]
-        rows.append(f"<tr><th>{self.t('storage')}</th><td class='n'>{size_text(storage)}</td>"
-                    f"<td class='n'>{size_text(usage.bucket_storage_bytes)}</td>"
-                    f"<td class='n'>{size_text(FREE_STORAGE)}</td><td class='n'>{100 * storage / FREE_STORAGE:.2f} %</td>"
-                    f"<td class='n'>{size_text(LIMITS['storage'])}</td><td class='n'>–</td></tr>")
+        rows.append(f"<tr><th>{self.t('storage')}</th><td class='n'>{size_text(storage, lang)}</td>"
+                    f"<td class='n'>{size_text(usage.bucket_storage_bytes, lang)}</td>"
+                    f"<td class='n'>{size_text(FREE_STORAGE, lang)}</td><td class='n'>{percent(100 * storage / FREE_STORAGE, lang)}</td>"
+                    f"<td class='n'>{size_text(LIMITS['storage'], lang)}</td><td class='n'>–</td></tr>")
         growth = self.storage_growth()
         if growth is None:
             outlook = ""
         else:
             left = (LIMITS["storage"] - storage) / growth if growth > 0 else None
-            outlook = (f"<p>{self.t('growth')}: {size_text(max(growth, 0))} {self.t('per_day')} · "
+            outlook = (f"<p>{self.t('growth')}: {size_text(max(growth, 0), self.lang)} {self.t('per_day')} · "
                        f"{self.t('days_left')}: "
                        + (f"{left:.0f} {self.t('days_unit')}" if left is not None and left < 3650 else self.t("never"))
                        + "</p>")
@@ -376,7 +409,7 @@ class Web:
         for key in logs:
             try:
                 entry = json.loads(await self.read(key))
-                lines.append((entry.get("time", ""), f"<tr><td>{self.when(entry.get('time'))}</td>"
+                lines.append((entry.get("time", ""), f"<tr><td class='t'>{self.when(entry.get('time'))}</td>"
                               f"<td>{html.escape(str(entry.get('message', '')))}</td></tr>"))
             except Blocked:
                 blocked = True
@@ -386,7 +419,7 @@ class Web:
         table = "".join(row for _, row in sorted(lines)) or f"<tr><td class='muted'>{self.t('none')}</td></tr>"
         snaps = "".join(
             f'<li><a href="{{base}}/snapshot/{day}/{quote(f.rsplit("/", 1)[1])}">'
-            f"{self.when(self.folder_time(f))} · {html.escape(f.rsplit('_', 1)[1])}</a></li>" for f in folders
+            f"{self.when(self.folder_time(f))} · {html.escape(self.panel_state(f.rsplit('/', 1)[1].split('_', 1)[1]))}</a></li>" for f in folders
         ) or f"<li class='muted'>{self.t('none')}</li>"
         files = (self.archive.state.data["summaries"].get(day) or {}).get("files", 0)
         summaries = "".join(
@@ -429,14 +462,14 @@ class Web:
             f"{self.t('download')}</a></figcaption></figure>"
             for cam, file in (meta.get("cameras") or {}).items())
         missing = meta.get("missing_cameras") or []
-        info = (f"<table><tr><th>{self.t('from_to')}</th><td>{html.escape(str(meta.get('from')))} → "
-                f"{html.escape(str(meta.get('to')))}</td></tr>"
-                f"<tr><th>{self.t('user')}</th><td>{html.escape(str(meta.get('user_id') or '–'))}</td></tr>"
+        info = (f"<table><tr><th>{self.t('from_to')}</th><td>{html.escape(self.panel_state(meta.get('from')))} → "
+                f"{html.escape(self.panel_state(meta.get('to')))}</td></tr>"
+                f"<tr><th>{self.t('user')}</th><td>{html.escape(await self.user_name(meta.get('user_id')))}</td></tr>"
                 + (f"<tr><th>{self.t('missing')}</th><td>{html.escape(', '.join(missing))}</td></tr>" if missing else "")
                 + "</table>" + (f"<p class='muted'>{self.t('reconstructed')}</p>" if meta.get("reconstructed") else ""))
         downloads = " · ".join(f'<a href="{{base}}/file/{folder}/{f}?download=1">{f}</a>'
                                for f in ("meta.json", "zustand.json.gz"))
-        body = (f"<h1>{self.when(meta.get('time'))} · {html.escape(str(meta.get('to')))}</h1>"
+        body = (f"<h1>{self.when(meta.get('time'))} · {html.escape(self.panel_state(meta.get('to')))}</h1>"
                 f"<section>{info}<p>{self.t('download')}: {downloads}</p></section>"
                 + (f"<section><h2>{self.t('pictures')}</h2><div class='pics'>{pictures}</div></section>" if pictures else "")
                 + f"<section><h2>{self.t('states')}</h2><table><tr><th>{self.t('entity')}</th>"
@@ -450,7 +483,7 @@ class Web:
         now = time.time()
         rows = "".join(
             f"<tr><td>{html.escape(i.key)}</td><td>{html.escape(i.kind)}</td>"
-            f"<td class='n'>{size_text(i.size)}</td>"
+            f"<td class='n'>{size_text(i.size, self.lang)}</td>"
             f"<td>{self.when(datetime.fromtimestamp(i.queued, UTC))} ({int((now - i.queued) // 60)} min)</td></tr>"
             for i in items)
         body = (f"<h1>{self.t('queue')}</h1><section><table><tr><th>{self.t('object')}</th><th>{self.t('kind')}</th>"
