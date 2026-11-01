@@ -56,7 +56,7 @@ def seeded(tmp_path, usage=USAGE):
 @pytest.fixture
 async def client(tmp_path, aiohttp_client):
     archive, r2 = seeded(tmp_path)
-    web = Web(archive, Cache(tmp_path / "cache"), allowed_peers=set())
+    web = Web(archive, Cache(tmp_path / "cache"), allowed_peers=set(), slug="local_r2_alarm_archive")
     return await aiohttp_client(web.app()), archive, r2
 
 
@@ -66,26 +66,51 @@ async def text(client, path, headers=None):
     return await resp.text()
 
 
-async def test_overview(client):
+async def test_menu(client):
     c, archive, _ = client
     page = await text(c, "/", {"X-Ingress-Path": "/api/hassio_ingress/abc"})
-    assert "Archivierung läuft" in page and 'href="/api/hassio_ingress/abc/days"' in page
+    for name in ("overview", "details", "queue"):
+        assert f'href="/api/hassio_ingress/abc/{name}"' in page
+    # The options are Home Assistant's own page, outside the ingress frame
+    assert 'href="/config/app/local_r2_alarm_archive/config" target="_top"' in page
+    assert "Detailansicht" in page and "<span class=\"badge" not in page
+    archive.r2_connected = False
+    archive._enqueue("protokoll/2026/11/01/x.json", "log", "2026-11-01", b"x", "application/json")
+    page = await text(c, "/")
+    assert '<span class="badge warn">1</span>' in page and '<span class="badge">1</span>' in page
+
+
+async def test_overview(client):
+    c, archive, _ = client
+    page = await text(c, "/overview", {"X-Ingress-Path": "/api/hassio_ingress/abc"})
+    assert "Archivierung läuft" in page and 'class="back" href="/api/hassio_ingress/abc/"' in page
     assert "1.234" in page and "900.000" in page and "7,0 MB" in page and "2,0 MB" in page and "0,12 %" in page
     assert "Lifecycle- und Lock-Regeln passen" in page
     archive.language = "en"
     archive.r2_connected = False
-    assert "R2 not reachable" in await text(c, "/")
+    assert "R2 not reachable" in await text(c, "/overview")
 
 
-async def test_days_and_day(client):
+async def test_details_by_month(client):
+    c, archive, _ = client
+    archive.state.uploaded("2026-09-30", "protokoll/2026/09/30/x.json")
+    page = await text(c, "/details")
+    # Newest month open, older ones closed; the day counts entries, snapshots, alarms, summaries
+    assert '<details id="m-2026-10" open>' in page and '<details id="m-2026-09">' in page
+    assert "Oktober 2026" in page and "September 2026" in page and "Sa. 31.10.2026" in page
+    assert "<div class='n'>2</div><div class='n'>1</div><div class='n alarm'>1</div><div class='n opt'>1</div>" in page
+    assert '<details id="m-2026-09" open>' in await text(c, "/details?month=2026-09")
+    assert "Noch nichts archiviert" not in page
+
+
+async def test_day(client):
     c, _, _ = client
-    days = await text(c, "/days")
-    assert "31.10.2026" in days and "<td class='n'>2</td><td class='n'>1</td><td class='n'>1</td>" in days
     day = await text(c, f"/day/{DAY}")
+    assert 'href="/details?month=2026-10"' in day
     # Sorted by time, escaped, in local time
     assert day.index("11:17:33") < day.index("11:17:44")
     assert "ALARM &lt;ausgelöst&gt;" in day and "<ausgelöst>" not in day
-    assert f"/snapshot/{DAY}/20261031T101733.000000Z_triggered" in day and "· ALARM</a>" in day
+    assert f"/snapshot/{DAY}/20261031T101733.000000Z_triggered" in day and "'alarm'>ALARM</div>" in day
     assert "2026-10-31.txt?download=1" in day
     assert (await c.get("/day/kaputt")).status == 404
 

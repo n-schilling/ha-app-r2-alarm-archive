@@ -102,7 +102,7 @@ async def run(cfg: cfg_module.Config) -> None:
             tasks.create_task(archive.usage_loop())
             tasks.create_task(archive.rules_loop())
             tasks.create_task(archive.summary_loop())
-            tasks.create_task(Web(archive, Cache(DATA / "cache")).run())
+            tasks.create_task(Web(archive, Cache(DATA / "cache"), slug=slug).run())
 
 
 def main() -> None:

@@ -2,6 +2,14 @@
 
 All notable changes to this app are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the app uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-11-01
+
+### Changed
+
+- Web page in the style of Home Assistant's settings: it takes over the theme in use (colors, dark mode, cards, fonts) and opens with a menu with icons: Overview, Details, Queue and Settings, with badges for problems and waiting objects
+- *Details* replaces *Days*: the archived days as a table grouped by month, the newest month open, with entries, snapshots, alarms and summaries per day and month
+- *Settings* opens the app's options in Home Assistant
+
 ## [0.4.2] - 2026-11-01
 
 ### Fixed

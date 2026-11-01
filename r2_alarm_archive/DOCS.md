@@ -18,12 +18,14 @@ The app reads the log from Home Assistant's recorder and resumes where it stoppe
 
 ## Web page
 
-The app adds a page **Alarm Archive** to Home Assistant's sidebar (for administrators only). It reads, it never changes anything, and it reaches the browser only through Home Assistant, so no port is opened. It follows Home Assistant's language (German or English):
+The app adds a page **Alarm Archive** to Home Assistant's sidebar (for administrators only). It reads, it never changes anything, and it reaches the browser only through Home Assistant, so no port is opened. It looks like Home Assistant's settings, takes over the theme in use (colors, dark mode, cards) and follows Home Assistant's language (German or English). It opens with a menu:
 
 - **Overview:** whether archiving works and why not, the R2 connection, the queue, last upload and summary; the free tier with absolute figures for the whole account and this bucket, the guard's limits, a projection to the end of the month, the storage growth per day and when the guard's limit would be reached; the bucket rules, with the Wrangler commands when they differ.
-- **Days:** every archived day with its entries, snapshots and summaries. A day shows its log lines, links to its snapshots and its summary files.
-- **Snapshot:** the change, the user, the states as a table and the camera pictures.
+- **Details:** the archived days as a table grouped by month (the newest month open), with entries, snapshots, alarms and summaries per day and month. A day shows its log lines, its snapshots and its summary files; a snapshot shows the change, the user, the camera pictures and the states.
 - **Queue:** what waits on the machine, and since when.
+- **Settings:** opens the app's options in Home Assistant.
+
+A badge in the menu counts the problems and the waiting objects.
 
 Every file can be downloaded, e.g. a summary or a picture to hand on. Objects in the bucket never change, so the app keeps what it read in a cache in `/data` (up to 200 MB). Reads from R2 count against the free tier guard; at its limit the page shows only what the cache has.
 
