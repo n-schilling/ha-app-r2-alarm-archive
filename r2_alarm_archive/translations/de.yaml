@@ -30,13 +30,16 @@ configuration:
     description: Zustände der Zentrale, die einen Snapshot bekommen.
   snapshot_entities:
     name: Snapshot-Entitäten
-    description: Entitäten, deren Zustände in einen Snapshot kommen; Gruppen zählen mit ihren Mitgliedern. Die Zentrale ist immer dabei.
+    description: Entitäten, deren Zustände in einen Snapshot kommen; Gruppen zählen mit ihren Mitgliedern. Die Zentrale ist immer dabei. Die volle Entity-ID eintippen, z. B. binary_sensor.haustur, und „Benutzerdefiniertes Element hinzufügen“ wählen.
   snapshot_all_entities:
     name: Alle Entitäten im Snapshot
     description: Stattdessen die Zustände aller Entitäten in jeden Snapshot.
   cameras:
     name: Kameras
-    description: Kamera-Entitäten mit je einem Bild pro Snapshot.
+    description: Kamera-Entitäten mit je einem Bild pro Snapshot. Die volle Entity-ID eintippen, z. B. camera.haustur, und „Benutzerdefiniertes Element hinzufügen“ wählen.
+  camera_states:
+    name: Kamera-Zustände
+    description: Zustände der Zentrale, deren Snapshots auch Kamerabilder bekommen; jeder muss ein Snapshot-Zustand sein. Ein Bild ist etwa 0,6 MB groß.
   retention_log:
     name: Aufbewahrung Protokoll
     description: "unlimited oder Tage. Die App prüft, ob der Bucket eine passende Lifecycle-Regel hat; sie setzt sie nicht."

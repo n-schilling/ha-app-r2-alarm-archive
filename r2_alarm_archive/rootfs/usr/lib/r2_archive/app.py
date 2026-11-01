@@ -103,7 +103,8 @@ class Archive:
         percent = self.guard.percent()
         rules: dict[str, object] = {"problems": self.rule_problems or []}
         if self.rule_problems:
-            rules["commands"] = a.rule_commands(self.cfg.bucket, self.cfg.retention, self.cfg.lock)
+            rules["commands"] = a.rule_commands(self.cfg.bucket, self.cfg.retention, self.cfg.lock,
+                                                self.cfg.jurisdiction)
         reasons = self.health()
         return {
             "archiving": not reasons,
@@ -320,7 +321,7 @@ class Archive:
                        "attributes": s.get("attributes") or {}, "last_changed": s.get("last_changed")}
                       for s in current if s["entity_id"] in wanted]
         pictures: dict[str, str | None] = {}
-        for camera in self.cfg.cameras:
+        for camera in self.cfg.cameras if new in self.cfg.camera_states else ():
             name = a.camera_file(camera)
             if reconstructed:
                 pictures[camera] = None
@@ -385,7 +386,7 @@ class Archive:
                 if problems:
                     LOGGER.warning("To match the options: %s",
                                    "; ".join(a.rule_commands(self.cfg.bucket, self.cfg.retention,
-                                                             self.cfg.lock)))
+                                                             self.cfg.lock, self.cfg.jurisdiction)))
             if problems != self.rule_problems:
                 self.rule_problems = problems
                 self._changed()

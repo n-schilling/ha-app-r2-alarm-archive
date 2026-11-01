@@ -38,6 +38,7 @@ class Config:
     snapshot_entities: tuple[str, ...]
     snapshot_all_entities: bool
     cameras: tuple[str, ...]
+    camera_states: tuple[str, ...]     # snapshots that also get pictures
     retention: dict[str, int | None]   # kind -> days, None = unlimited
     lock: dict[str, int | str | None]  # kind -> days, "indefinite", None = off
     mqtt_host: str
@@ -108,6 +109,10 @@ def load(path: Path = OPTIONS, mqtt_service=supervisor_mqtt) -> Config:
     cameras = _entities("cameras", opts.get("cameras"))
     if bad := [c for c in cameras if not c.startswith("camera.")]:
         raise ConfigError(f"cameras: {', '.join(bad)} is no camera entity")
+    camera_states = tuple(opts.get("camera_states") or ())
+    if bad := [s for s in camera_states if s not in states]:
+        raise ConfigError(f"camera_states: {', '.join(bad)} is not in snapshot_states; "
+                          "pictures are taken only with a snapshot")
 
     retention = {k: _days(f"retention_{k}", opts.get(f"retention_{k}", "unlimited"),
                           {"unlimited": None}) for k in KINDS}
@@ -146,6 +151,7 @@ def load(path: Path = OPTIONS, mqtt_service=supervisor_mqtt) -> Config:
         snapshot_entities=_entities("snapshot_entities", opts.get("snapshot_entities")),
         snapshot_all_entities=bool(opts.get("snapshot_all_entities", False)),
         cameras=cameras,
+        camera_states=camera_states,
         retention=retention,
         lock=lock,
         mqtt_host=mqtt["host"],

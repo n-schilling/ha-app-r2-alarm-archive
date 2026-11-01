@@ -314,3 +314,22 @@ async def test_usage_poll_at_the_month_change(tmp_path):
     assert archive._next_usage_poll() == 6
     clock.moment = datetime(2026, 11, 1, 0, 0, 5, tzinfo=UTC)
     assert archive._next_usage_poll() == 900
+
+
+async def test_pictures_only_for_camera_states(tmp_path):
+    archive, ha, r2, _, clock = build(tmp_path, camera_states=["triggered"])
+    ha.state_list = [{"entity_id": PANEL, "state": "disarmed", "attributes": {}, "last_changed": "t"}]
+    when = datetime(2026, 10, 31, 10, 17, 33, tzinfo=UTC)
+    clock.moment = when - timedelta(minutes=10)
+    async with running(archive.follow_panel(), archive.upload_loop()):
+        await settle(lambda: archive.state.data["panel_cursor"] is not None)
+        await ha.panel_events.put(panel_event("triggered", "disarmed", when))
+        await ha.panel_events.put(panel_event("armed_night", "triggered", when - timedelta(seconds=30)))
+        await settle(lambda: len(r2.objects) == 5)
+    disarmed = "snapshots/2026/10/31/20261031T101733.000000Z_disarmed/"
+    triggered = "snapshots/2026/10/31/20261031T101703.000000Z_triggered/"
+    assert sorted(k for k in r2.objects if k.startswith(disarmed)) == [disarmed + "meta.json",
+                                                                      disarmed + "zustand.json.gz"]
+    meta = json.loads(r2.objects[disarmed + "meta.json"])
+    assert meta["cameras"] == {} and meta["missing_cameras"] == []
+    assert triggered + "kamera_front.jpg" in r2.objects

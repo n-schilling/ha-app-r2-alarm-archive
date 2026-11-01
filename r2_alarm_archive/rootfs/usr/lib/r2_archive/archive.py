@@ -160,17 +160,18 @@ def rule_problems(lifecycle: list[dict], locks: list[dict], retention: dict, loc
     return problems
 
 
-def rule_commands(bucket: str, retention: dict, lock: dict) -> list[str]:
+def rule_commands(bucket: str, retention: dict, lock: dict, jurisdiction: str = "default") -> list[str]:
     """Wrangler commands that set the rules the options ask for."""
     commands = []
+    where = "" if jurisdiction == "default" else f" --jurisdiction {jurisdiction}"
     for kind, prefix in PREFIX.items():
         if retention[kind] is not None:
             commands.append(f"npx wrangler r2 bucket lifecycle add {bucket} delete-{kind} {prefix} "
-                            f"--expire-days {retention[kind]}")
+                            f"--expire-days {retention[kind]}{where}")
         if lock[kind] == "indefinite":
             commands.append(f"npx wrangler r2 bucket lock add {bucket} lock-{kind} {prefix} "
-                            "--retention-indefinite")
+                            f"--retention-indefinite{where}")
         elif lock[kind] is not None:
             commands.append(f"npx wrangler r2 bucket lock add {bucket} lock-{kind} {prefix} "
-                            f"--retention-days {lock[kind]}")
+                            f"--retention-days {lock[kind]}{where}")
     return commands

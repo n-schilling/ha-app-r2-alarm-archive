@@ -34,6 +34,7 @@ def test_options(cfg):
     ({"retention_log": "forever"}, "retention_log must be"),
     ({"lock_log": "7", "retention_log": "3"}, "lock would win"),
     ({"lock_snapshots": "indefinite"}, "lock would win"),
+    ({"camera_states": ["armed_home"]}, "not in snapshot_states"),
     ({"api_token": ""}, "free_tier_guard needs api_token"),
 ])
 def test_bad_options(tmp_path, extra, message):
@@ -184,6 +185,11 @@ def test_rules_differ():
     assert len(wrong_lock) == 3
     assert a.rule_problems([lifecycle("snapshots/", 365)], [lock("protokoll/", 7)], RETENTION,
                            {**NO_LOCK, "log": "indefinite"})[0].startswith("protokoll/: lock indefinite")
+
+
+def test_rule_commands_name_the_jurisdiction():
+    assert a.rule_commands("b", RETENTION, NO_LOCK, "eu") == [
+        "npx wrangler r2 bucket lifecycle add b delete-snapshots snapshots/ --expire-days 365 --jurisdiction eu"]
 
 
 def test_rule_commands():

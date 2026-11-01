@@ -30,13 +30,16 @@ configuration:
     description: Panel states that get a snapshot.
   snapshot_entities:
     name: Snapshot entities
-    description: Entities whose states go into a snapshot; groups count with their members. The panel is always in.
+    description: Entities whose states go into a snapshot; groups count with their members. The panel is always in. Type the full entity ID, e.g. binary_sensor.front_door, and choose Add custom item.
   snapshot_all_entities:
     name: Snapshot all entities
     description: Put the states of all entities into each snapshot instead.
   cameras:
     name: Cameras
-    description: Camera entities with one picture per snapshot.
+    description: Camera entities with one picture per snapshot. Type the full entity ID, e.g. camera.front_door, and choose Add custom item.
+  camera_states:
+    name: Camera states
+    description: Panel states whose snapshots also get camera pictures; each must be a snapshot state. A picture is about 0.6 MB.
   retention_log:
     name: Retention of the log
     description: "unlimited or days. The app checks that the bucket has a matching lifecycle rule; it does not set it."

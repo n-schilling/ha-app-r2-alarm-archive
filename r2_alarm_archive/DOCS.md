@@ -9,7 +9,7 @@ The app reads the log from Home Assistant's recorder and resumes where it stoppe
 - **Log.** Write the alarm log with `logbook.log` and one anchor entity, e.g. an `input_boolean` (`log_entity`). The app follows the logbook of that entity and puts each entry into its own object: `protokoll/YYYY/MM/DD/<UTC time>_<hash>.json`. The first start reads everything the recorder has.
 - **Snapshots.** When the alarm panel (`alarm_panel`) changes to one of the `snapshot_states`, the app stores, under `snapshots/YYYY/MM/DD/<UTC time>_<state>/`:
   - `zustand.json.gz`: the states of `snapshot_entities` (groups with their members, three levels deep) and the panel, or of all entities with `snapshot_all_entities`;
-  - `kamera_<camera>.jpg`: one picture per entity in `cameras`;
+  - `kamera_<camera>.jpg`: one picture per entity in `cameras`, only when the new state is in `camera_states` (default: only `triggered`; a picture is about 0.6 MB);
   - `meta.json`: from and to state, the panel's attributes, the user, which pictures are missing.
 
   Was the app not running at the time, it rebuilds the states from the recorder at its next start, marks the snapshot as `reconstructed` and lists the pictures as missing. Snapshots start with the app's first start.
@@ -50,6 +50,8 @@ A lock keeps objects even past their retention. The options therefore refuse a l
 
 ## Options
 
+The list options (`snapshot_entities`, `cameras`) have no entity picker in the app's Configuration tab: type the full entity ID and choose *Add custom item*.
+
 | Option | Default | Meaning |
 |---|---|---|
 | `account_id` | | Cloudflare account ID, 32 hex digits |
@@ -64,6 +66,7 @@ A lock keeps objects even past their retention. The options therefore refuse a l
 | `snapshot_entities` | | Entities in each snapshot; groups count with their members |
 | `snapshot_all_entities` | `false` | All entities in each snapshot instead |
 | `cameras` | | Camera entities, one picture each per snapshot |
+| `camera_states` | `triggered` | Panel states whose snapshots also get pictures; each must be in `snapshot_states` |
 | `retention_log`, `retention_snapshots`, `retention_summaries` | `unlimited`, `365`, `unlimited` | Days, or `unlimited`; checked, not set |
 | `lock_log`, `lock_snapshots`, `lock_summaries` | `off` | `off`, `indefinite` or days; checked, not set |
 | `discovery_prefix` | `homeassistant` | MQTT discovery prefix |

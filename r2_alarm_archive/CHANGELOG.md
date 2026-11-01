@@ -2,6 +2,17 @@
 
 All notable changes to this app are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the app uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-11-01
+
+### Added
+
+- Option `camera_states`: only snapshots of these panel states get camera pictures, by default only `triggered`. A picture is about 0.6 MB; with pictures on every arming and disarming the bucket grows by a few hundred MB a month
+
+### Changed
+
+- The Wrangler commands for the bucket rules name the jurisdiction (`--jurisdiction eu`) for a bucket outside the default jurisdiction
+- The descriptions of the list options say to type the full entity ID: the Configuration tab has no entity picker for them
+
 ## [0.2.1] - 2026-10-31
 
 ### Fixed
