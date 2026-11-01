@@ -39,6 +39,8 @@ class Config:
     snapshot_all_entities: bool
     cameras: tuple[str, ...]
     camera_states: tuple[str, ...]     # snapshots that also get pictures
+    camera_pictures: int               # pictures per camera and snapshot, a series
+    camera_interval: int               # seconds between the pictures of a series
     retention: dict[str, int | None]   # kind -> days, None = unlimited
     lock: dict[str, int | str | None]  # kind -> days, "indefinite", None = off
     mqtt_host: str
@@ -80,6 +82,16 @@ def _entities(name: str, raw: object) -> tuple[str, ...]:
     return values
 
 
+def _number(name: str, raw: object, low: int, high: int) -> int:
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as err:
+        raise ConfigError(f"{name} must be a number from {low} to {high}, not {raw!r}") from err
+    if not low <= value <= high:
+        raise ConfigError(f"{name} must be a number from {low} to {high}, not {value}")
+    return value
+
+
 def load(path: Path = OPTIONS, mqtt_service=supervisor_mqtt) -> Config:
     try:
         opts = json.loads(path.read_text())
@@ -113,6 +125,8 @@ def load(path: Path = OPTIONS, mqtt_service=supervisor_mqtt) -> Config:
     if bad := [s for s in camera_states if s not in states]:
         raise ConfigError(f"camera_states: {', '.join(bad)} is not in snapshot_states; "
                           "pictures are taken only with a snapshot")
+    camera_pictures = _number("camera_pictures", opts.get("camera_pictures", 1), 1, 10)
+    camera_interval = _number("camera_interval", opts.get("camera_interval", 10), 1, 60)
 
     retention = {k: _days(f"retention_{k}", opts.get(f"retention_{k}", "unlimited"),
                           {"unlimited": None}) for k in KINDS}
@@ -152,6 +166,8 @@ def load(path: Path = OPTIONS, mqtt_service=supervisor_mqtt) -> Config:
         snapshot_all_entities=bool(opts.get("snapshot_all_entities", False)),
         cameras=cameras,
         camera_states=camera_states,
+        camera_pictures=camera_pictures,
+        camera_interval=camera_interval,
         retention=retention,
         lock=lock,
         mqtt_host=mqtt["host"],

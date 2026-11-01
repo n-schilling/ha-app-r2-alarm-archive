@@ -9,9 +9,11 @@ meta file written after it; without the meta file it does not exist.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
+import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -40,9 +42,19 @@ class Item:
     queued: float        # epoch seconds when it was queued
 
 
+@dataclass(frozen=True)
+class Quarantined:
+    name: str
+    size: int
+    moved: float         # epoch seconds when it was set aside
+
+
 class Queue:
-    def __init__(self, folder: Path) -> None:
+    def __init__(self, folder: Path, quarantine: Path | None = None) -> None:
         self._folder = folder
+        # Where unreadable entries go: a folder the user can reach, to look at
+        # them and delete them by hand
+        self.quarantine = quarantine or folder / "quarantine"
         folder.mkdir(parents=True, exist_ok=True)
         for tmp in folder.glob(".*.tmp"):
             tmp.unlink()
@@ -65,12 +77,28 @@ class Queue:
         self._next = max(self._items, default=0) + 1
 
     def _quarantine(self, meta: Path, err: Exception) -> None:
-        folder = self._folder / "quarantine"
-        folder.mkdir(exist_ok=True)
+        folder = self.quarantine
+        folder.mkdir(parents=True, exist_ok=True)
         for path in (meta, meta.with_suffix(".bin")):
             if path.exists():
-                os.replace(path, folder / path.name)
+                # Another file system possibly: copy, then remove
+                shutil.copy2(path, folder / path.name)
+                path.unlink()
+                os.utime(folder / path.name)
         LOGGER.error("Queued object %s is unreadable (%s); moved to %s", meta.stem, err, folder)
+
+    def quarantined(self) -> list[Quarantined]:
+        """What lies in the quarantine; gone once the user deletes it."""
+        try:
+            paths = sorted(p for p in self.quarantine.iterdir() if p.is_file() and not p.name.startswith("."))
+        except OSError:
+            return []
+        out = []
+        for path in paths:
+            with contextlib.suppress(OSError):
+                stat = path.stat()
+                out.append(Quarantined(path.name, stat.st_size, stat.st_mtime))
+        return out
 
     def __len__(self) -> int:
         return len(self._items)

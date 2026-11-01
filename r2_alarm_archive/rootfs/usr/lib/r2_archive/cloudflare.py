@@ -140,3 +140,29 @@ class Cloudflare:
 
     async def lock_rules(self) -> list[dict]:
         return await self._rules("lock")
+
+    async def token_expiry(self) -> datetime | None:
+        """When api_token expires, None when it never does. Any token may
+        verify itself: an account token at the account, a user token at the
+        user."""
+        for url in (f"{self._api}/accounts/{self._account}/tokens/verify", f"{self._api}/user/tokens/verify"):
+            try:
+                async with self._http.get(url, headers=self._headers, timeout=self._timeout) as resp:
+                    if resp.status in (400, 401, 403, 404):
+                        continue
+                    if resp.status != 200:
+                        raise CloudflareError(f"{url}: HTTP {resp.status}")
+                    data = await resp.json()
+            except (aiohttp.ClientError, TimeoutError, ValueError) as err:
+                raise CloudflareError(f"{url}: {err or type(err).__name__}") from err
+            result = data.get("result") or {}
+            if not data.get("success", False) or result.get("status") != "active":
+                raise CloudflareError(f"api_token not active: {result.get('status') or data.get('errors')}")
+            expires = result.get("expires_on")
+            if not expires:
+                return None
+            try:
+                return datetime.fromisoformat(str(expires).replace("Z", "+00:00"))
+            except ValueError as err:
+                raise CloudflareError(f"api_token: unreadable expires_on {expires!r}") from err
+        raise CloudflareError("api_token could not be verified")

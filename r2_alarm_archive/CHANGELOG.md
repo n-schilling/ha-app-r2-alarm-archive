@@ -2,6 +2,19 @@
 
 All notable changes to this app are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the app uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-11-01
+
+### Added
+
+- With an empty index, e.g. after a new install, the app reads what the bucket holds once: the web page shows the whole archive again and no summary is written twice
+- Picture series: options `camera_pictures` (default 3) and `camera_interval` (default 10 s); the first picture at once, the others after it
+- Web page: a day or a month as one ZIP, with the log as readable text and a list of files R2 no longer has; a filter for days with an alarm
+- Entity *API token expires soon*, on 14 days before `api_token` expires; the date also on the overview
+
+### Changed
+
+- Unreadable queue entries go to `quarantine` in the app's folder in `/addon_configs`, where they can be looked at and deleted; while any lie there, *Archiving* is off and the queue page lists them
+
 ## [0.5.1] - 2026-11-01
 
 ### Fixed

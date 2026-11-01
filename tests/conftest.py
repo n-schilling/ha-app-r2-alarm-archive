@@ -121,6 +121,10 @@ class FakeCloudflare:
         self.result = usage
         self.lifecycle: list[dict] = []
         self.locks: list[dict] = []
+        self.expiry = None
+
+    async def token_expiry(self):
+        return self.expiry
 
     async def usage(self, now):
         return self.result

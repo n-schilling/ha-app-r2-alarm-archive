@@ -66,7 +66,7 @@ The log does not have to be an alarm log. Any entity works as `log_entity`, for 
 Set `alarm_panel` to an `alarm_control_panel` entity, and the app saves a snapshot each time the panel changes to one of `snapshot_states`. What goes in:
 
 - **States** of the entities in `snapshot_entities`, plus the panel itself. Put in what tells the story of an alarm: door and window contacts, motion sensors, persons. A group counts with its members, so listing your alarm groups is enough. `snapshot_all_entities` takes everything instead (larger, about 0.1 MB per snapshot for 1,500 entities).
-- **One picture** of each camera in `cameras`, but only for the panel states in `camera_states` (by default only `triggered`). A picture is about 0.6 MB, so pictures on every arming and disarming add up to a few hundred MB a month.
+- **Pictures** of each camera in `cameras`, but only for the panel states in `camera_states` (by default only `triggered`): a series of `camera_pictures` (default 3), `camera_interval` seconds apart (default 10). A picture is about 0.6 MB, so pictures on every arming and disarming add up to a few hundred MB a month.
 
 The lists in the app's options have no entity picker: type the full entity ID, e.g. `camera.front_door`, and choose *Add custom item*.
 
@@ -101,7 +101,7 @@ The entity IDs are those Home Assistant usually gives; check them on the device 
 | Area | Options |
 |---|---|
 | Cloudflare | `account_id`, `bucket`, `jurisdiction` (`default` or `eu`), the R2 key (`access_key_id`, `secret_access_key`), a read-only `api_token` |
-| What is archived | `log_entity`; for snapshots `alarm_panel`, `snapshot_states`, `snapshot_entities` or `snapshot_all_entities`, `cameras`, `camera_states` |
+| What is archived | `log_entity`; for snapshots `alarm_panel`, `snapshot_states`, `snapshot_entities` or `snapshot_all_entities`, `cameras`, `camera_states`, `camera_pictures`, `camera_interval` |
 | Costs | `free_tier_guard`: keep the whole Cloudflare account 10 % below the limits of R2's free tier (on by default) |
 | Retention | `retention_log`, `retention_snapshots`, `retention_summaries`: days or `unlimited` |
 | Protection | `lock_log`, `lock_snapshots`, `lock_summaries`: bucket lock `off`, `indefinite` or days |

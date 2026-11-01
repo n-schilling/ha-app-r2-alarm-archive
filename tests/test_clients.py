@@ -118,12 +118,23 @@ class FakeApi:
     def __init__(self):
         self.status = 200
         self.queries = []
+        self.expires_on = "2027-01-31T23:59:59Z"
 
     def app(self):
         app = web.Application()
         app.router.add_post("/graphql", self.graphql)
         app.router.add_get("/accounts/{account}/r2/buckets/{bucket}/{what}", self.rules)
+        app.router.add_get("/accounts/{account}/tokens/verify", self.account_token)
+        app.router.add_get("/user/tokens/verify", self.user_token)
         return app
+
+    async def account_token(self, request):
+        # A user token is no account token
+        return web.json_response({"success": False, "errors": [{"code": 1000}]}, status=401)
+
+    async def user_token(self, request):
+        return web.json_response({"success": True, "result": {"id": "t", "status": "active",
+                                                               "expires_on": self.expires_on}})
 
     async def graphql(self, request):
         if self.status != 200:
@@ -153,6 +164,9 @@ async def test_cloudflare(aiohttp_server):
         assert variables["dayStart"] == "2026-10-30T08:00:00+00:00"
         assert await api.lifecycle_rules() == [{"id": "lifecycle"}]
         assert await api.lock_rules() == [{"id": "lock"}]
+        assert await api.token_expiry() == datetime(2027, 1, 31, 23, 59, 59, tzinfo=UTC)
+        fake.expires_on = None
+        assert await api.token_expiry() is None
         fake.status = 403
         with pytest.raises(CloudflareError, match="refused"):
             await api.usage(datetime(2026, 10, 31, tzinfo=UTC))

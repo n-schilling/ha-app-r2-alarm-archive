@@ -36,10 +36,16 @@ configuration:
     description: Put the states of all entities into each snapshot instead.
   cameras:
     name: Cameras
-    description: Camera entities with one picture per snapshot. Type the full entity ID, e.g. camera.front_door, and choose Add custom item.
+    description: Camera entities whose pictures go into the snapshots. Type the full entity ID, e.g. camera.front_door, and choose Add custom item.
   camera_states:
     name: Camera states
     description: Panel states whose snapshots also get camera pictures; each must be a snapshot state. A picture is about 0.6 MB.
+  camera_pictures:
+    name: Pictures per camera
+    description: "With 2 or more, the app takes a series: the first picture at once, the others at this interval. Each picture is about 0.6 MB."
+  camera_interval:
+    name: Seconds between pictures
+    description: "Interval of the picture series, 1 to 60 seconds."
   retention_log:
     name: Retention of the log
     description: "unlimited or days. The app checks that the bucket has a matching lifecycle rule; it does not set it."

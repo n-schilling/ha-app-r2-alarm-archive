@@ -71,8 +71,33 @@ def snapshot_folder(moment: datetime, state: str, tz: ZoneInfo) -> tuple[str, st
     return f"{PREFIX['snapshots']}{day_folder(day)}{stamp(moment)}_{state}/", day
 
 
-def camera_file(entity_id: str) -> str:
-    return f"kamera_{entity_id.split('.', 1)[1]}.jpg"
+def camera_file(entity_id: str, number: int = 1) -> str:
+    """The picture of a camera; further pictures of a series get _2, _3, ..."""
+    suffix = "" if number == 1 else f"_{number}"
+    return f"kamera_{entity_id.split('.', 1)[1]}{suffix}.jpg"
+
+
+def key_day(key: str) -> str | None:
+    """The local day of a log or snapshot key from its folders."""
+    parts = key.split("/")
+    try:
+        return date(int(parts[1]), int(parts[2]), int(parts[3])).isoformat()
+    except (IndexError, ValueError):
+        return None
+
+
+def summary_part(key: str) -> tuple[str, int] | None:
+    """(day, part) of a summary key: 0 for the summary, N for nachtrag-N."""
+    name = key.rsplit("/", 1)[-1].removesuffix(".txt")
+    day, rest = name[:10], name[10:]
+    try:
+        date.fromisoformat(day)
+        part = int(rest.removeprefix("-nachtrag-")) if rest else 0
+    except ValueError:
+        return None
+    if summary_key(day, part) != key:
+        return None
+    return day, part
 
 
 def states_body(moment: datetime, states: list[dict], reconstructed: bool) -> bytes:
@@ -82,12 +107,16 @@ def states_body(moment: datetime, states: list[dict], reconstructed: bool) -> by
 
 
 def meta_body(moment: datetime, panel: str, old: str | None, new: str, attributes: dict,
-              user_id: str | None, cameras: dict[str, str | None], reconstructed: bool) -> bytes:
-    """`cameras`: entity -> file name, or None when its picture is missing."""
+              user_id: str | None, cameras: dict[str, str | None], reconstructed: bool,
+              series: dict[str, list[str]] | None = None) -> bytes:
+    """`cameras`: entity -> file name, or None when its picture is missing;
+    `series`: entity -> all file names of its picture series, the first included."""
     data = {"time": moment.astimezone(UTC).isoformat(), "panel": panel, "from": old, "to": new,
             "attributes": attributes, "user_id": user_id, "reconstructed": reconstructed,
             "cameras": {cam: name for cam, name in cameras.items() if name},
             "missing_cameras": [cam for cam, name in cameras.items() if not name]}
+    if series:
+        data["series"] = series
     return json.dumps(data, ensure_ascii=False, indent=1).encode()
 
 

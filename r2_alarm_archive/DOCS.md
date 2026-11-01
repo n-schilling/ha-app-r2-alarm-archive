@@ -9,25 +9,27 @@ The app reads the log from Home Assistant's recorder and resumes where it stoppe
 - **Log.** Write the alarm log with `logbook.log` and one anchor entity, e.g. an `input_boolean` (`log_entity`). The app follows the logbook of that entity and puts each entry into its own object: `protokoll/YYYY/MM/DD/<UTC time>_<hash>.json`. The first start reads everything the recorder has.
 - **Snapshots.** When the alarm panel (`alarm_panel`) changes to one of the `snapshot_states`, the app stores, under `snapshots/YYYY/MM/DD/<UTC time>_<state>/`:
   - `zustand.json.gz`: the states of `snapshot_entities` (groups with their members, three levels deep) and the panel, or of all entities with `snapshot_all_entities`;
-  - `kamera_<camera>.jpg`: one picture per entity in `cameras`, only when the new state is in `camera_states` (default: only `triggered`; a picture is about 0.6 MB);
-  - `meta.json`: from and to state, the panel's attributes, the user, which pictures are missing.
+  - `kamera_<camera>.jpg`: pictures of each entity in `cameras`, only when the new state is in `camera_states` (default: only `triggered`; a picture is about 0.6 MB). With `camera_pictures` above 1 the app takes a series: the first picture at once, the others every `camera_interval` seconds as `kamera_<camera>_2.jpg`, `_3` and so on (default: 3 pictures, 10 s apart);
+  - `meta.json`: from and to state, the panel's attributes, the user, which pictures are missing and which files the series has.
 
   Was the app not running at the time, it rebuilds the states from the recorder at its next start, marks the snapshot as `reconstructed` and lists the pictures as missing. Snapshots start with the app's first start.
 - **Daily summary.** At 00:05 local time (Home Assistant's time zone) the app writes `zusammenfassung/YYYY/MM/YYYY-MM-DD.txt`: one line per entry of the day before, its snapshots, and the SHA-256 of every entry. It is built from what is in R2, so it shows what really arrived. It waits until nothing of that day is in the queue. Entries that reach R2 after the summary go into `…-nachtrag-1.txt`, `-2` and so on.
 - **Folders** follow the local date, times inside the objects are UTC.
+- **A new install.** The app keeps an index of what is in the bucket in `/data`. When that index is empty, e.g. after a new Home Assistant installation, the app first lists the bucket once (a few Class A operations) and fills the index from it. The web page then shows the whole archive again, and the app writes no summary twice.
+- **Quarantine.** A queued object the app cannot read after a crash is never deleted: it goes to `quarantine` in the app's folder in `/addon_configs` (reachable with Samba or an editor app), *Archiving* turns off and names it. Look at the files and delete them; the problem goes with them.
 
 ## Web page
 
 The app adds a page **Alarm Archive** to Home Assistant's sidebar (for administrators only). It reads, it never changes anything, and it reaches the browser only through Home Assistant, so no port is opened. It looks like Home Assistant's settings, takes over the theme in use (colors, dark mode, cards) and follows Home Assistant's language (German or English). It opens with a menu:
 
 - **Overview:** whether archiving works and why not, the R2 connection, the queue, last upload and summary; the free tier with absolute figures for the whole account and this bucket, the guard's limits, a projection to the end of the month, the storage growth per day and when the guard's limit would be reached; the bucket rules, with the Wrangler commands when they differ.
-- **Details:** the archived days as a table grouped by month (the newest month open), with entries, snapshots, alarms and summaries per day and month. A day shows its log lines, its snapshots and its summary files; a snapshot shows the change, the user, the camera pictures and the states.
-- **Queue:** what waits on the machine, and since when.
+- **Details:** the archived days as a table grouped by month (the newest month open), with entries, snapshots, alarms and summaries per day and month; a filter shows only days with an alarm (a snapshot of `triggered`). A day shows its log lines, its snapshots and its summary files; a snapshot shows the change, the user, the camera pictures and the states.
+- **Queue:** what waits on the machine, and since when; and what lies in the quarantine.
 - **Settings:** opens the app's options in Home Assistant.
 
 A badge in the menu counts the problems and the waiting objects.
 
-Every file can be downloaded, e.g. a summary or a picture to hand on. Objects in the bucket never change, so the app keeps what it read in a cache in `/data` (up to 200 MB). Reads from R2 count against the free tier guard; at its limit the page shows only what the cache has.
+Every file can be downloaded, e.g. a summary or a picture to hand on. A day or a whole month also comes as one ZIP (the icon in the day's header, the download icon in the month's row): every object under its key, the log of each day as readable text, and a list of files R2 no longer has, e.g. after the retention. Objects in the bucket never change, so the app keeps what it read in a cache in `/data` (up to 200 MB). Reads from R2 count against the free tier guard; at its limit the page shows only what the cache has.
 
 ## Free tier guard
 
@@ -80,6 +82,8 @@ The list options (`snapshot_entities`, `cameras`) have no entity picker in the a
 | `snapshot_all_entities` | `false` | All entities in each snapshot instead |
 | `cameras` | | Camera entities, one picture each per snapshot |
 | `camera_states` | `triggered` | Panel states whose snapshots also get pictures; each must be in `snapshot_states` |
+| `camera_pictures` | `3` | Pictures per camera and snapshot, 1 to 10; from 2 a series |
+| `camera_interval` | `10` | Seconds between the pictures of a series, 1 to 60 |
 | `retention_log`, `retention_snapshots`, `retention_summaries` | `unlimited`, `365`, `unlimited` | Days, or `unlimited`; checked, not set |
 | `lock_log`, `lock_snapshots`, `lock_summaries` | `off` | `off`, `indefinite` or days; checked, not set |
 | `discovery_prefix` | `homeassistant` | MQTT discovery prefix |
@@ -92,13 +96,14 @@ One device *R2 Alarm Archive*:
 
 | Entity | Meaning |
 |---|---|
-| Archiving | **The one for dashboards.** On while archiving works; off with the reasons in its attribute `problems`: Home Assistant not connected, R2 not reachable, the last upload failed, an object waits longer than 15 minutes, the free tier limit is reached or no usage figure is there, a summary is more than an hour late |
+| Archiving | **The one for dashboards.** On while archiving works; off with the reasons in its attribute `problems`: Home Assistant not connected, R2 not reachable, the last upload failed, an object waits longer than 15 minutes, objects lie in the quarantine, the free tier limit is reached or no usage figure is there, a summary is more than an hour late |
 | R2 connection | Off only when R2 cannot be reached (network, R2 itself). An answer with an error, such as a refused key, counts as connected and goes to the log |
 | Queue | Objects waiting for R2 |
 | Last upload, Last summary | When R2 last confirmed an object, when the last summary was written |
 | Free tier usage | The highest of the three figures in % of the free tier; all three as attributes |
 | Free tier limit reached | On at 90 %; unknown without a usage figure |
 | Bucket rules differ | On when lifecycle or lock rules do not match the options; unknown without `api_token` |
+| API token expires soon | On when `api_token` expires within 14 days, with the date in its attribute `expires_on`; off for a token without expiry; unknown without `api_token`. Checked daily. The R2 key's own expiry cannot be read with these permissions: set a reminder when you give it one |
 
 All entities are unavailable while the app is stopped.
 

@@ -57,6 +57,9 @@ def components() -> dict[str, dict]:
         "bucket_rules": _entity("binary_sensor", "bucket_rules", "Bucket rules differ",
                                 device_class="problem", state_topic=topic("bucket_rules"),
                                 json_attributes_topic=topic("bucket_rules/attributes"), **on_off),
+        "token_expiring": _entity("binary_sensor", "token_expiring", "API token expires soon",
+                                  device_class="problem", state_topic=topic("token_expiring"),
+                                  json_attributes_topic=topic("token_expiring/attributes"), **on_off),
     }
 
 

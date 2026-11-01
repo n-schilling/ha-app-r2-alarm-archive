@@ -41,6 +41,9 @@ GROUP_DEPTH = 3
 # when a summary is this late
 STUCK_AFTER = 15 * 60
 SUMMARY_GRACE = timedelta(hours=1)
+# api_token: checked daily, warned about this long before it expires
+TOKEN_INTERVAL = 24 * 3600
+TOKEN_WARN = timedelta(days=14)
 
 
 def iso(moment: datetime) -> str:
@@ -64,9 +67,13 @@ class Archive:
         self.ha_connected = False
         self.upload_error: str | None = None      # the last upload failed with this
         self.rule_problems: list[str] | None = None
+        self.token_checked = False           # api_token verified at least once
+        self.token_expiry: datetime | None = None   # None: it never expires
         self.changed = asyncio.Event()       # a status value changed
         self._wake = asyncio.Event()         # the queue has something new
         self._ready = asyncio.Event()        # the time zone is known
+        self._restored = asyncio.Event()     # the index is there, or was read from R2
+        self._series: set[asyncio.Task] = set()     # picture series still being taken
 
     # --- Status ---------------------------------------------------------------
     def health(self) -> list[str]:
@@ -80,6 +87,8 @@ class Archive:
             reasons.append("R2 not reachable")
         if self.upload_error:
             reasons.append(f"last upload failed: {self.upload_error}")
+        if set_aside := {q.name.rsplit(".", 1)[0] for q in self.queue.quarantined()}:
+            reasons.append(f"{len(set_aside)} objects in quarantine")
         oldest = self.queue.oldest()
         if oldest is not None and clock_time.time() - oldest > STUCK_AFTER:
             reasons.append(f"{len(self.queue)} objects waiting, the oldest for "
@@ -120,7 +129,16 @@ class Archive:
             "free_tier_limit": self.guard.limit_reached(loop_now, month),
             "bucket_rules": None if self.rule_problems is None else bool(self.rule_problems),
             "bucket_rules/attributes": json.dumps(rules),
+            "token_expiring": self.token_expiring(),
+            "token_expiring/attributes": json.dumps(
+                {"expires_on": iso(self.token_expiry) if self.token_expiry else None}),
         }
+
+    def token_expiring(self) -> bool | None:
+        """api_token expires within two weeks; None while not checked."""
+        if not self.token_checked:
+            return None
+        return self.token_expiry is not None and self.token_expiry - self.now() < TOKEN_WARN
 
     def _changed(self) -> None:
         self.changed.set()
@@ -222,6 +240,8 @@ class Archive:
             failures += 1
 
     async def follow_log(self) -> None:
+        # With a fresh index first learn what the bucket holds, so nothing is sent twice
+        await self._restored.wait()
         cursor = self.state.data["log_cursor"]
         start = (datetime.fromtimestamp(cursor - 1, UTC) if cursor is not None
                  else self.now() - timedelta(days=FIRST_START_DAYS))
@@ -323,6 +343,7 @@ class Archive:
                        "attributes": s.get("attributes") or {}, "last_changed": s.get("last_changed")}
                       for s in current if s["entity_id"] in wanted]
         pictures: dict[str, str | None] = {}
+        series: dict[str, list[str]] = {}
         for camera in self.cfg.cameras if new in self.cfg.camera_states else ():
             name = a.camera_file(camera)
             if reconstructed:
@@ -336,13 +357,78 @@ class Archive:
                 continue
             self._enqueue(folder + name, "snapshots", day, picture, "image/jpeg")
             pictures[camera] = name
+            if self.cfg.camera_pictures > 1:
+                series[camera] = [name] + [a.camera_file(camera, n) for n in range(2, self.cfg.camera_pictures + 1)]
         self._enqueue(folder + "zustand.json.gz", "snapshots", day,
                       a.states_body(moment, states, reconstructed), "application/gzip")
         self._enqueue(folder + "meta.json", "snapshots", day,
                       a.meta_body(moment, self.cfg.alarm_panel, old, new, attributes, user_id,
-                                  pictures, reconstructed), "application/json")
+                                  pictures, reconstructed, series), "application/json")
+        if series:
+            # The rest of the series after the meta file: a restart loses only those pictures
+            task = asyncio.create_task(self._take_series(folder, day, series))
+            self._series.add(task)
+            task.add_done_callback(self._series.discard)
         LOGGER.info("Snapshot %s queued (%d states, %d pictures)", folder, len(states),
                     sum(1 for p in pictures.values() if p))
+
+    async def _take_series(self, folder: str, day: str, series: dict[str, list[str]]) -> None:
+        for number in range(1, self.cfg.camera_pictures):
+            await asyncio.sleep(self.cfg.camera_interval)
+            for camera, names in series.items():
+                try:
+                    picture = await self.ha.camera(camera)
+                except HAError as err:
+                    LOGGER.warning("No picture %d of the series: %s", number + 1, err)
+                    continue
+                self._enqueue(folder + names[number], "snapshots", day, picture, "image/jpeg")
+
+    # --- Index ----------------------------------------------------------------------
+    async def restore_index(self) -> None:
+        """Fills an empty index from the bucket, e.g. after a new install or
+        a lost /data: the web page, the summaries and the log stream then know
+        what is archived already. Runs once; with an index it does nothing."""
+        data = self.state.data
+        if data["uploaded"] or data["summaries"]:
+            self._restored.set()
+            return
+        failures = 0
+        while True:
+            if not self.guard.allows(asyncio.get_running_loop().time(), utc_month(self.now()), class_a=3):
+                await asyncio.sleep(60)
+                continue
+            try:
+                found = {kind: await self.r2.list(prefix) for kind, prefix in a.PREFIX.items()}
+            except R2Error as err:
+                self._set_r2(not err.unreachable)
+                delay = BACKOFF[min(failures, len(BACKOFF) - 1)]
+                failures += 1
+                LOGGER.warning("Index not read from R2: %s; again in %d s", err, delay)
+                await asyncio.sleep(delay)
+                continue
+            break
+        self._set_r2(True)
+        # One Class A operation per page of 1000 keys
+        self.guard.count(class_a=sum(max(1, -(-len(keys) // 1000)) for keys in found.values()))
+        for key in found["log"] + found["snapshots"]:
+            if day := a.key_day(key):
+                self.state.uploaded(day, key)
+        for key in found["summaries"]:
+            if parsed := a.summary_part(key):
+                day, part = parsed
+                keys = data["uploaded"].get(day, [])
+                folders = {k.rsplit("/", 1)[0] + "/" for k in keys if k.startswith(a.PREFIX["snapshots"])}
+                done = data["summaries"].setdefault(day, {"covered": sorted(set(keys) | folders), "files": 0})
+                done["files"] = max(done["files"], part + 1)
+        if data["summaries"] and not data["installed"]:
+            data["installed"] = min(data["summaries"])
+        self.state.save()
+        if found["log"] or found["snapshots"] or found["summaries"]:
+            LOGGER.info("Index read from R2: %d log entries, %d snapshot files, %d summaries of %d days",
+                        len(found["log"]), len(found["snapshots"]), len(found["summaries"]),
+                        len(set(data["uploaded"]) | set(data["summaries"])))
+        self._restored.set()
+        self._changed()
 
     # --- Free tier guard and bucket rules -------------------------------------------
     async def usage_loop(self) -> None:
@@ -381,6 +467,23 @@ class Archive:
         next_month = (now.replace(day=28) + timedelta(days=4)).replace(
             day=1, hour=0, minute=0, second=0, microsecond=0)
         return max(1.0, min(USAGE_INTERVAL, (next_month - now).total_seconds() + 5))
+
+    async def token_loop(self) -> None:
+        if self.cloudflare is None:
+            return
+        while True:
+            try:
+                expiry = await self.cloudflare.token_expiry()
+            except CloudflareError as err:
+                LOGGER.warning("api_token not verified: %s", err)
+                await asyncio.sleep(3600)
+                continue
+            if not self.token_checked or expiry != self.token_expiry:
+                self.token_checked, self.token_expiry = True, expiry
+                self._changed()
+            if self.token_expiring():
+                LOGGER.warning("api_token expires on %s; renew it and set the new one", iso(expiry))
+            await asyncio.sleep(TOKEN_INTERVAL)
 
     async def rules_loop(self) -> None:
         if self.cloudflare is None:
@@ -431,6 +534,7 @@ class Archive:
 
     async def summary_loop(self) -> None:
         await self._ready.wait()
+        await self._restored.wait()
         while True:
             local = self.now().astimezone(self.tz)
             today = local.date()

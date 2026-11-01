@@ -191,3 +191,71 @@ async def test_user_without_person(tmp_path):
     assert await web.user_name("wd") == "Wall Display"
     assert await web.user_name("u1") == "Kim"
     assert await web.user_name("nobody") == "nobody"
+
+
+async def test_alarm_filter(client):
+    c, archive, _ = client
+    archive.state.uploaded("2026-10-30", "protokoll/2026/10/30/x.json")
+    archive.state.uploaded("2026-09-30", "protokoll/2026/09/30/x.json")
+    page = await text(c, "/details?alarms=1")
+    assert "Sa. 31.10.2026" in page and "Fr. 30.10.2026" not in page and "September 2026" not in page
+    assert 'class="chip on" href="/details"' in page
+    archive.state.data["uploaded"]["2026-10-31"] = [k for k in archive.state.data["uploaded"]["2026-10-31"]
+                                                    if "triggered" not in k]
+    assert "Kein Tag mit Alarm." in await text(c, "/details?alarms=1")
+
+
+async def test_export(client):
+    import io
+    import zipfile
+    c, archive, r2 = client
+    day = await text(c, f"/day/{DAY}")
+    assert f'href="/export/{DAY}.zip"' in day
+    assert 'href="/export/2026-10.zip"' in await text(c, "/details")
+    # A snapshot file R2 no longer has, e.g. after the retention
+    archive.state.uploaded(DAY, f"{FOLDER}/weg.json")
+    resp = await c.get(f"/export/{DAY}.zip")
+    assert resp.status == 200 and resp.headers["Content-Disposition"] == f'attachment; filename="alarm-archiv-{DAY}.zip"'
+    names = zipfile.ZipFile(io.BytesIO(await resp.read())).namelist()
+    root = f"alarm-archiv-{DAY}/"
+    assert root + f"{FOLDER}/kamera_front.jpg" in names and root + a.summary_key(DAY, 0) in names
+    assert sum(n.startswith(root + "protokoll/") for n in names) == 2
+    zipped = zipfile.ZipFile(io.BytesIO(await (await c.get(f"/export/{DAY}.zip")).read()))
+    assert "ALARM <ausgelöst>" in zipped.read(root + f"protokoll-{DAY}.txt").decode()
+    assert zipped.read(root + "fehlende-dateien.txt").decode() == f"{FOLDER}/weg.json\n"
+    month = zipfile.ZipFile(io.BytesIO(await (await c.get("/export/2026-10.zip")).read())).namelist()
+    assert "alarm-archiv-2026-10/" + f"{FOLDER}/meta.json" in month
+    for bad in ("/export/2026-13.zip", "/export/1999-01.zip", "/export/kaputt.zip"):
+        assert (await c.get(bad)).status == 404
+
+
+async def test_quarantine_on_queue_page(client):
+    c, archive, _ = client
+    archive.queue.quarantine.mkdir(parents=True)
+    (archive.queue.quarantine / "0000000007.json").write_text("kaputt")
+    page = await text(c, "/queue")
+    assert "Quarantäne" in page and "0000000007.json" in page
+    assert "/addon_configs/local_r2_alarm_archive/quarantine" in page
+    assert "1 Objekte in Quarantäne" in await text(c, "/overview")
+
+
+async def test_token_on_overview(client):
+    from datetime import timedelta
+    c, archive, _ = client
+    assert "noch nicht geprüft" in await text(c, "/overview")
+    archive.token_checked, archive.token_expiry = True, None
+    assert "<td>nie</td>" in await text(c, "/overview")
+    archive.token_expiry = archive.now() + timedelta(days=5)
+    assert "class=\"bad\">06.11.2026 10:00:00 (in 5 Tagen)" in await text(c, "/overview")
+
+
+async def test_series_pictures(client):
+    c, archive, r2 = client
+    meta = json.loads(r2.objects[f"{FOLDER}/meta.json"])
+    meta["series"] = {"camera.front": ["kamera_front.jpg", "kamera_front_2.jpg", "kamera_front_3.jpg"]}
+    r2.objects[f"{FOLDER}/meta.json"] = json.dumps(meta).encode()
+    r2.objects[f"{FOLDER}/kamera_front_2.jpg"] = b"\xff\xd8two"
+    archive.state.uploaded(DAY, f"{FOLDER}/kamera_front_2.jpg")
+    page = await text(c, f"/snapshot/{DAY}/20261031T101733.000000Z_triggered")
+    # Picture 3 never arrived: not shown
+    assert "kamera_front_2.jpg" in page and "kamera_front_3.jpg" not in page and "camera.front · 2" in page

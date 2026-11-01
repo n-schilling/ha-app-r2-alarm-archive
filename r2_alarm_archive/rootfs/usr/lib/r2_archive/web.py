@@ -18,10 +18,12 @@ import asyncio
 import calendar
 import gzip
 import html
+import io
 import json
 import logging
 import os
 import time
+import zipfile
 from datetime import UTC, date, datetime
 from pathlib import Path
 from urllib.parse import quote
@@ -68,7 +70,14 @@ TEXT = {
         "object": "Object", "kind": "Kind", "size": "Size", "age": "Waiting since",
         "cached_only": "The free tier limit is reached: only what was read before is shown.",
         "not_cached": "(not in the cache)", "user": "User", "no_days": "Nothing archived yet.",
-        "problems": "Problems", "file": "File",
+        "problems": "Problems", "file": "File", "token": "API token expires",
+        "token_never": "never", "token_unknown": "not checked yet", "in_days": "in {} days",
+        "export_day": "Download the day as ZIP", "export_month": "Download the month as ZIP",
+        "only_alarms": "Only days with an alarm", "no_alarm_days": "No day with an alarm.",
+        "quarantine": "Quarantine",
+        "quarantine_info": "Queue entries the app could not read. They lie in {} (reachable e.g. with Samba or "
+                           "an editor app); the problem goes once they are deleted.",
+        "moved": "Set aside", "missing_files": "Missing files",
     },
     "de": {
         "title": "Alarm-Archiv", "overview": "Übersicht", "details": "Detailansicht", "queue": "Warteschlange",
@@ -99,6 +108,14 @@ TEXT = {
         "cached_only": "Die Free-Tier-Grenze ist erreicht: Es wird nur angezeigt, was schon gelesen wurde.",
         "not_cached": "(nicht im Zwischenspeicher)", "user": "Benutzer",
         "no_days": "Noch nichts archiviert.", "problems": "Probleme", "file": "Datei",
+        "token": "API-Token läuft ab", "token_never": "nie", "token_unknown": "noch nicht geprüft",
+        "in_days": "in {} Tagen", "export_day": "Tag als ZIP herunterladen",
+        "export_month": "Monat als ZIP herunterladen", "only_alarms": "Nur Tage mit Alarm",
+        "no_alarm_days": "Kein Tag mit Alarm.", "quarantine": "Quarantäne",
+        "quarantine_info": "Einträge der Warteschlange, die die App nicht lesen konnte. Sie liegen in {} "
+                           "(erreichbar z. B. über Samba oder eine Editor-App); die Meldung verschwindet, "
+                           "sobald sie gelöscht sind.",
+        "moved": "Beiseitegelegt", "missing_files": "Fehlende Dateien",
     },
 }
 
@@ -140,6 +157,8 @@ ICONS = {
     "back": "M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z",
     "open": "M7.41,15.41L12,10.83L16.59,15.41L18,14L12,8L6,14L7.41,15.41Z",
     "download": "M5,20H19V18H5M19,9H15V3H9V9H5L12,16L19,9Z",
+    "zip": "M14,17H12V15H10V13H12V15H14M14,9H12V11H14V13H12V11H10V9H12V7H10V5H12V7H14M19,3H5C3.89,3 3,3.89 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V5C21,3.89 20.1,3 19,3Z",
+    "check": "M21,7L9,19L3.5,13.5L4.91,12.09L9,16.17L19.59,5.59L21,7Z",
     "ok": "M12 2C6.5 2 2 6.5 2 12S6.5 22 12 22 22 17.5 22 12 17.5 2 12 2M10 17L5 12L6.41 10.59L10 14.17L17.59 6.58L19 8L10 17Z",
     "alert": "M13,13H11V7H13M13,17H11V15H13M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2Z",
 }
@@ -239,6 +258,15 @@ details:not([open]) .open { transform: rotate(180deg); }
 .pics { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 16px; }
 .pics figure { margin: 0; } .pics img { display: block; width: 100%; border-radius: 12px; }
 .pics figcaption { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+header .actions { margin-left: auto; display: flex; }
+.toolbar { display: flex; align-items: center; gap: 8px; min-height: 56px; padding: 0 16px;
+  border-bottom: 1px solid var(--divider-color); background: var(--primary-background-color); }
+.chip { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 8px;
+  border: 1px solid var(--divider-color); color: var(--primary-text-color); font-size: 13px; font-weight: 500; }
+.chip svg { width: 18px; height: 18px; }
+.chip.on { background: color-mix(in srgb, var(--primary-color) 15%, transparent); border-color: transparent; }
+.chip:hover { background: color-mix(in srgb, var(--primary-text-color) 6%, transparent); }
+summary a.next:hover { color: var(--primary-color); }
 .notice { padding: 12px 16px; margin-bottom: 16px; border-radius: var(--ha-card-border-radius);
   background: color-mix(in srgb, var(--warning-color) 15%, transparent); }
 @media (max-width: 600px) {
@@ -301,6 +329,8 @@ def problem_text(p: str, lang: str) -> str:
     if " objects waiting, the oldest for " in p:
         words = p.split(" ")
         return f"{words[0]} Objekte warten, das älteste seit {words[-2]} min"
+    if p.endswith(" objects in quarantine"):
+        return f"{p.split(' ')[0]} Objekte in Quarantäne"
     if p.startswith("summary of ") and p.endswith(" missing"):
         return f"Tageszusammenfassung vom {p[11:-8]} fehlt"
     return p
@@ -360,6 +390,7 @@ class Web:
         app.router.add_get("/snapshot/{day}/{name}", self.snapshot)
         app.router.add_get("/queue", self.queue)
         app.router.add_get("/file/{key:.+}", self.file)
+        app.router.add_get("/export/{period}.zip", self.export)
         return app
 
     async def run(self, port: int = PORT) -> None:
@@ -436,7 +467,7 @@ class Web:
         return f"{MONTHS[self.lang][int(number_) - 1]} {year}"
 
     def page(self, request: web.Request, title: str, body: str, back: str | None = None,
-             width: str = "") -> web.Response:
+             width: str = "", actions: str = "") -> web.Response:
         base = request.headers.get("X-Ingress-Path", "")
         body = body.replace("{base}", base)
         back_link = (f'<a class="back" href="{base}{back}" title="{self.t("back")}">{icon("back")}</a>'
@@ -445,7 +476,8 @@ class Web:
             f'<!doctype html><html lang="{self.lang}"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width, initial-scale=1">'
             f"<title>{html.escape(title)}</title><style>{STYLE}</style><script>{SCRIPT}</script></head><body>"
-            f"<header>{back_link}<h1>{html.escape(title)}</h1></header>"
+            f"<header>{back_link}<h1>{html.escape(title)}</h1>"
+            f'<div class="actions">{actions.replace("{base}", base)}</div></header>'
             f'<main class="{width}">{body}</main></body></html>'))
 
     def card(self, title: str | None, content: str, padded: bool = True) -> str:
@@ -516,7 +548,8 @@ class Web:
             f"<tr><th>{self.t('waiting')}</th><td>{len(archive.queue)}</td></tr>"
             f"<tr><th>{self.t('last_upload')}</th><td>{self.when(status['last_upload'])}</td></tr>"
             f"<tr><th>{self.t('last_summary')}</th><td>{self.when(status['last_summary'])}</td></tr>"
-            "</table>"))
+            + (f"<tr><th>{self.t('token')}</th><td>{self.token_text()}</td></tr>" if archive.cloudflare else "")
+            + "</table>"))
         body += self.card(self.t("free_tier"), self.free_tier())
         if archive.rule_problems is None:
             rules = f'<p class="muted">{self.t("rules_unknown")}</p>'
@@ -530,6 +563,16 @@ class Web:
                      + "</ul><pre>" + html.escape("\n".join(commands)) + "</pre>")
         body += self.card(self.t("rules"), rules)
         return self.page(request, self.t("overview"), body, back="/")
+
+    def token_text(self) -> str:
+        archive = self.archive
+        if not archive.token_checked:
+            return f'<span class="muted">{self.t("token_unknown")}</span>'
+        if archive.token_expiry is None:
+            return self.t("token_never")
+        days = (archive.token_expiry - archive.now()).days
+        text = f"{self.when(archive.token_expiry)} ({self.t('in_days').format(max(days, 0))})"
+        return f'<span class="bad">{text}</span>' if archive.token_expiring() else text
 
     def free_tier(self) -> str:
         archive = self.archive
@@ -590,11 +633,14 @@ class Web:
 
     async def details(self, request: web.Request) -> web.Response:
         data = self.archive.state.data
+        only_alarms = request.query.get("alarms") == "1"
         all_days = sorted(set(data["uploaded"]) | set(data["summaries"]), reverse=True)
+        if only_alarms:
+            all_days = [day for day in all_days if self.day_counts(day)[2]]
         months: dict[str, list[str]] = {}
         for day in all_days:
             months.setdefault(day[:7], []).append(day)
-        # The newest month opens, or the one a day page came back from
+        # The newest month opens, or the one a day page came back from; filtered, all
         wanted = request.query.get("month")
         open_month = wanted if wanted in months else next(iter(months), None)
         groups = []
@@ -608,18 +654,23 @@ class Web:
                 for day, (entries, snaps, alarms, files) in zip(days, counts, strict=True))
             alarms = sum(c[2] for c in counts)
             groups.append(
-                f'<details id="m-{month}"{" open" if month == open_month else ""}><summary class="row">'
+                f'<details id="m-{month}"{" open" if only_alarms or month == open_month else ""}><summary class="row">'
                 f'<div class="group">{icon("open", "open")}{self.month_text(month)}'
                 f'<span class="muted opt">· {len(days)} {self.t("days")}</span></div>'
                 f"<div class='n'>{sum(c[0] for c in counts)}</div><div class='n'>{sum(c[1] for c in counts)}</div>"
                 f"<div class='n{' alarm' if alarms else ''}'>{alarms or '–'}</div>"
-                f"<div class='n opt'>{sum(c[3] for c in counts) or '–'}</div><div></div></summary>{rows}</details>")
+                f"<div class='n opt'>{sum(c[3] for c in counts) or '–'}</div>"
+                f'<a class="next" href="{{base}}/export/{month}.zip" title="{self.t("export_month")}">'
+                f'{icon("download")}</a></summary>{rows}</details>')
         head = (f'<div class="row thead"><div>{self.t("day")}</div><div class="n">{self.t("entries")}</div>'
                 f'<div class="n">{self.t("snapshots")}</div><div class="n">{self.t("alarms")}</div>'
                 f'<div class="n opt">{self.t("summaries")}</div><div></div></div>')
-        body = "".join(groups) or f'<div class="row empty"><div>{self.t("no_days")}</div></div>'
-        return self.page(request, self.t("details"), f'<div class="table cols-details">{head}{body}</div>',
-                         back="/", width="wide")
+        empty = self.t("no_alarm_days" if only_alarms else "no_days")
+        body = "".join(groups) or f'<div class="row empty"><div>{empty}</div></div>'
+        chip = (f'<a class="chip{" on" if only_alarms else ""}" href="{{base}}/details{"" if only_alarms else "?alarms=1"}">'
+                + (icon("check") if only_alarms else "") + f'{self.t("only_alarms")}</a>')
+        return self.page(request, self.t("details"), f'<div class="toolbar">{chip}</div>'
+                         f'<div class="table cols-details">{head}{body}</div>', back="/", width="wide")
 
     async def day(self, request: web.Request) -> web.Response:
         day = request.match_info["day"]
@@ -665,7 +716,10 @@ class Web:
         note = f'<div class="notice">{self.t("cached_only")}</div>' if blocked else ""
         body = (note + self.card(self.t("log"), log, padded=False) + self.card(self.t("snapshots"), snapshots, padded=False)
                 + self.card(self.t("summary"), summaries, padded=False))
-        return self.page(request, self.day_text(day, weekday=True), body, back=f"/details?month={day[:7]}")
+        export = (f'<a class="back" href="{{base}}/export/{day}.zip" title="{self.t("export_day")}">'
+                  f'{icon("zip")}</a>')
+        return self.page(request, self.day_text(day, weekday=True), body, back=f"/details?month={day[:7]}",
+                         actions=export)
 
     @staticmethod
     def folder_time(folder: str) -> datetime | None:
@@ -693,11 +747,16 @@ class Web:
             f"<br><span class='muted'>{html.escape(s['entity_id'])}</span></td>"
             f"<td>{html.escape(str(s.get('state')))}</td><td class='nowrap'>{self.when(s.get('last_changed'))}</td></tr>"
             for s in states.get("states", []))
+        # A series shows its pictures that arrived; older snapshots have one per camera
+        present = {k.rsplit("/", 1)[1] for k in keys}
+        shots = [(cam, file, n) for cam, first in (meta.get("cameras") or {}).items()
+                 for n, file in enumerate((meta.get("series") or {}).get(cam) or [first], 1) if file in present]
         pictures = "".join(
             f'<figure><img src="{{base}}/file/{folder}/{quote(file)}" alt="{html.escape(cam)}">'
-            f'<figcaption><span>{html.escape(cam)}</span><a class="button" href="{{base}}/file/{folder}/{quote(file)}?download=1">'
+            f'<figcaption><span>{html.escape(cam)}{f" · {n}" if n > 1 or len((meta.get("series") or {}).get(cam) or []) > 1 else ""}</span>'
+            f'<a class="button" href="{{base}}/file/{folder}/{quote(file)}?download=1">'
             f"{icon('download')}{self.t('download')}</a></figcaption></figure>"
-            for cam, file in (meta.get("cameras") or {}).items())
+            for cam, file, n in shots)
         missing = meta.get("missing_cameras") or []
         downloads = "".join(f'<a class="button" href="{{base}}/file/{folder}/{f}?download=1">{icon("download")}{f}</a>'
                             for f in ("meta.json", "zustand.json.gz"))
@@ -723,7 +782,64 @@ class Web:
                 for i in self.archive.queue.items()]
         table = self.table("queue", [(self.t("object"), ""), (self.t("kind"), "opt"), (self.t("size"), "n"),
                                      (self.t("age"), "")], rows, self.t("empty_queue"))
+        if kept := self.archive.queue.quarantined():
+            where = f"/addon_configs/{self.slug}/quarantine" if self.slug else str(self.archive.queue.quarantine)
+            rows = [f'<div class="row"><div>{html.escape(q.name)}</div><div class="opt"></div>'
+                    f'<div class="n">{size_text(q.size, self.lang)}</div>'
+                    f"<div>{self.when(datetime.fromtimestamp(q.moved, UTC))}</div></div>" for q in kept]
+            table += (f'<div class="toolbar"><strong>{self.t("quarantine")}</strong></div>'
+                      f'<div class="notice" style="margin:16px">{html.escape(self.t("quarantine_info").format(where))}</div>'
+                      + self.table("queue", [(self.t("file"), ""), ("", "opt"), (self.t("size"), "n"),
+                                             (self.t("moved"), "")], rows, ""))
         return self.page(request, self.t("queue"), table, back="/", width="wide")
+
+    async def export(self, request: web.Request) -> web.Response:
+        """A day (YYYY-MM-DD) or a month (YYYY-MM) as one ZIP: every archived
+        object under its key, and per day the log as readable text. Objects
+        R2 no longer has (e.g. after the retention) are listed instead."""
+        period = request.match_info["period"]
+        data = self.archive.state.data
+        try:
+            if len(period) == 10:
+                date.fromisoformat(period)
+            else:
+                date.fromisoformat(period + "-01")
+        except ValueError as err:
+            raise web.HTTPNotFound() from err
+        days = sorted(d for d in set(data["uploaded"]) | set(data["summaries"]) if d.startswith(period))
+        if not days:
+            raise web.HTTPNotFound()
+        root = f"alarm-archiv-{period}"
+        buffer = io.BytesIO()
+        missing: list[str] = []
+        try:
+            with zipfile.ZipFile(buffer, "w") as out:
+                for day in days:
+                    logs, _ = self.day_keys(day)
+                    keys = sorted(data["uploaded"].get(day, []))
+                    keys += [a.summary_key(day, part) for part in range((data["summaries"].get(day) or {}).get("files", 0))]
+                    entries = []
+                    for key in keys:
+                        try:
+                            body = await self.read(key)
+                        except R2Error:
+                            missing.append(key)
+                            continue
+                        packed = zipfile.ZIP_STORED if key.endswith((".jpg", ".gz")) else zipfile.ZIP_DEFLATED
+                        out.writestr(f"{root}/{key}", body, compress_type=packed)
+                        if key in logs:
+                            entries.append((key, body))
+                    out.writestr(f"{root}/protokoll-{day}.txt",
+                                 a.summary_text(day, entries, sorted({k.rsplit("/", 1)[0] for k in keys
+                                                                     if k.startswith(a.PREFIX["snapshots"])}),
+                                                self.tz, 0, self.archive.now()),
+                                 compress_type=zipfile.ZIP_DEFLATED)
+                if missing:
+                    out.writestr(f"{root}/fehlende-dateien.txt", "\n".join(missing) + "\n")
+        except Blocked as err:
+            raise web.HTTPServiceUnavailable(text=self.t("cached_only")) from err
+        return web.Response(body=buffer.getvalue(), content_type="application/zip",
+                            headers={"Content-Disposition": f'attachment; filename="{root}.zip"'})
 
     async def file(self, request: web.Request) -> web.Response:
         key = request.match_info["key"]

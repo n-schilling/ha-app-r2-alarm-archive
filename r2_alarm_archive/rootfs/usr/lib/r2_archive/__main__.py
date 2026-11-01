@@ -26,6 +26,8 @@ from .web import Cache, Web
 
 LOGGER = logging.getLogger("r2_archive")
 DATA = Path("/data")
+# The app's folder in /addon_configs, which the user can reach
+PUBLIC = Path("/config")
 # The MQTT payload Home Assistant shows as unknown
 UNKNOWN = "None"
 
@@ -92,15 +94,17 @@ async def run(cfg: cfg_module.Config) -> None:
         archive = Archive(cfg, HA(http, token),
                           R2(http, cfg.account_id, cfg.jurisdiction, cfg.bucket, cfg.access_key_id,
                              cfg.secret_access_key),
-                          cloudflare, Queue(DATA / "queue"), State(DATA / "state.json"))
+                          cloudflare, Queue(DATA / "queue", PUBLIC / "quarantine"), State(DATA / "state.json"))
         LOGGER.info("Archiving %s to bucket %s; %d objects waiting from before", cfg.log_entity,
                     cfg.bucket, len(archive.queue))
         async with asyncio.TaskGroup() as tasks:
             tasks.create_task(mqtt_loop(cfg, archive, ctx, slug))
+            tasks.create_task(archive.restore_index())
             tasks.create_task(archive.ha_loop())
             tasks.create_task(archive.upload_loop())
             tasks.create_task(archive.usage_loop())
             tasks.create_task(archive.rules_loop())
+            tasks.create_task(archive.token_loop())
             tasks.create_task(archive.summary_loop())
             tasks.create_task(Web(archive, Cache(DATA / "cache"), slug=slug).run())
 

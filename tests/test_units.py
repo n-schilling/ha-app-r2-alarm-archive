@@ -241,7 +241,7 @@ def test_discovery():
     assert d.device_topic("homeassistant") == "homeassistant/device/r2_alarm_archive/config"
     comps = payload["components"]
     assert set(comps) == {"archiving", "r2_connection", "queue", "last_upload", "last_summary", "free_tier_usage",
-                          "free_tier_limit", "bucket_rules"}
+                          "free_tier_limit", "bucket_rules", "token_expiring"}
     assert all(c["unique_id"].startswith("r2_alarm_archive_") for c in comps.values())
     assert comps["r2_connection"]["device_class"] == "connectivity"
     assert comps["archiving"]["device_class"] == "running"
@@ -249,12 +249,34 @@ def test_discovery():
 
 
 def test_unreadable_queue_entry_is_kept_aside(tmp_path):
-    queue = Queue(tmp_path / "q")
+    kept = tmp_path / "public" / "quarantine"
+    queue = Queue(tmp_path / "q", kept)
     queue.add("k1", "log", "2026-10-31", b"one", "application/json")
     (tmp_path / "q" / "0000000001.json").write_text('{"key": "k1"}')
-    again = Queue(tmp_path / "q")
+    again = Queue(tmp_path / "q", kept)
     assert len(again) == 0
-    kept = tmp_path / "q" / "quarantine"
     assert (kept / "0000000001.json").exists() and (kept / "0000000001.bin").read_bytes() == b"one"
-    # The quarantine folder is not read as queue entries
-    assert len(Queue(tmp_path / "q")) == 0
+    assert [q.name for q in again.quarantined()] == ["0000000001.bin", "0000000001.json"]
+    # Deleted by hand: gone
+    for path in kept.iterdir():
+        path.unlink()
+    assert again.quarantined() == []
+    assert Queue(tmp_path / "q").quarantined() == []
+
+
+def test_key_parts():
+    assert a.key_day("protokoll/2026/10/31/x.json") == "2026-10-31"
+    assert a.key_day("snapshots/2026/10/31/f/meta.json") == "2026-10-31"
+    assert a.key_day("protokoll/kaputt") is None
+    assert a.summary_part("zusammenfassung/2026/10/2026-10-31.txt") == ("2026-10-31", 0)
+    assert a.summary_part("zusammenfassung/2026/10/2026-10-31-nachtrag-2.txt") == ("2026-10-31", 2)
+    assert a.summary_part("zusammenfassung/2026/10/notiz.txt") is None
+    assert a.camera_file("camera.front") == "kamera_front.jpg"
+    assert a.camera_file("camera.front", 3) == "kamera_front_3.jpg"
+
+
+@pytest.mark.parametrize("extra, message", [({"camera_pictures": 0}, "camera_pictures"),
+                                            ({"camera_interval": "x"}, "camera_interval")])
+def test_series_options(tmp_path, extra, message):
+    with pytest.raises(cfg_module.ConfigError, match=message):
+        make_config(tmp_path, **extra)

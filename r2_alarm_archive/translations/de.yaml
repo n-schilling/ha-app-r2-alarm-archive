@@ -36,10 +36,16 @@ configuration:
     description: Stattdessen die Zustände aller Entitäten in jeden Snapshot.
   cameras:
     name: Kameras
-    description: Kamera-Entitäten mit je einem Bild pro Snapshot. Die volle Entity-ID eintippen, z. B. camera.haustur, und „Benutzerdefiniertes Element hinzufügen“ wählen.
+    description: Kamera-Entitäten, deren Bilder in die Snapshots kommen. Die volle Entity-ID eintippen, z. B. camera.haustur, und „Benutzerdefiniertes Element hinzufügen“ wählen.
   camera_states:
     name: Kamera-Zustände
     description: Zustände der Zentrale, deren Snapshots auch Kamerabilder bekommen; jeder muss ein Snapshot-Zustand sein. Ein Bild ist etwa 0,6 MB groß.
+  camera_pictures:
+    name: Bilder pro Kamera
+    description: "Ab 2 nimmt die App eine Serie auf: das erste Bild sofort, die weiteren im eingestellten Abstand. Jedes Bild ist etwa 0,6 MB groß."
+  camera_interval:
+    name: Sekunden zwischen den Bildern
+    description: "Abstand der Bildserie, 1 bis 60 Sekunden."
   retention_log:
     name: Aufbewahrung Protokoll
     description: "unlimited oder Tage. Die App prüft, ob der Bucket eine passende Lifecycle-Regel hat; sie setzt sie nicht."

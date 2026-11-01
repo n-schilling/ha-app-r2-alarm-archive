@@ -33,6 +33,7 @@ def build(tmp_path, cfg=None, guard_usage=NO_USAGE, **extra):
     archive = Archive(cfg, ha, r2, cf, Queue(tmp_path / "queue"), State(tmp_path / "state.json"), clock)
     archive.tz = BERLIN
     archive._ready.set()
+    archive._restored.set()
     if guard_usage is not None:
         archive.guard.update(guard_usage, asyncio.get_running_loop().time(), (2026, 10))
     return archive, ha, r2, cf, clock
@@ -359,3 +360,85 @@ async def test_stopping_logs_no_warning(tmp_path, caplog):
         await task
     assert not [r for r in caplog.records if r.levelname == "WARNING"]
     assert archive.ha_connected is False
+
+
+async def test_picture_series(tmp_path, monkeypatch):
+    archive, ha, r2, _, clock = build(tmp_path, camera_pictures=3, camera_interval=1)
+    sleeps = []
+
+    async def no_sleep(seconds):
+        sleeps.append(seconds)
+    monkeypatch.setattr(app_module.asyncio, "sleep", no_sleep)
+    ha.state_list = [{"entity_id": PANEL, "state": "triggered", "attributes": {}, "last_changed": "t"}]
+    when = datetime(2026, 10, 31, 10, 17, 33, tzinfo=UTC)
+    await archive.snapshot(when, "armed_night", "triggered", {}, None, reconstructed=False)
+    await asyncio.gather(*archive._series)
+    folder = "snapshots/2026/10/31/20261031T101733.000000Z_triggered/"
+    keys = sorted(i.key for i in archive.queue.items())
+    assert keys == [folder + n for n in ("kamera_front.jpg", "kamera_front_2.jpg", "kamera_front_3.jpg",
+                                         "meta.json", "zustand.json.gz")]
+    meta = json.loads(archive.queue.body(next(i for i in archive.queue.items() if i.key.endswith("meta.json"))))
+    assert meta["cameras"] == {"camera.front": "kamera_front.jpg"}
+    assert meta["series"] == {"camera.front": ["kamera_front.jpg", "kamera_front_2.jpg", "kamera_front_3.jpg"]}
+    assert sleeps == [1, 1]
+
+
+async def test_index_is_read_from_r2_when_empty(tmp_path):
+    archive, _, r2, _, _ = build(tmp_path)
+    archive._restored.clear()
+    folder = "snapshots/2026/10/30/20261030T200000.000000Z_triggered/"
+    r2.objects.update({"protokoll/2026/10/30/a.json": b"a", "protokoll/2026/10/31/b.json": b"b",
+                       folder + "meta.json": b"{}", "zusammenfassung/2026/10/2026-10-30.txt": b"s",
+                       "zusammenfassung/2026/10/2026-10-30-nachtrag-1.txt": b"s"})
+    await archive.restore_index()
+    assert archive._restored.is_set()
+    data = archive.state.data
+    assert sorted(data["uploaded"]) == ["2026-10-30", "2026-10-31"]
+    assert data["summaries"]["2026-10-30"]["files"] == 2
+    assert folder in data["summaries"]["2026-10-30"]["covered"]
+    assert data["installed"] == "2026-10-30"
+    # The 30th needs no new summary, the 31st does
+    assert archive._summary_days(datetime(2026, 11, 1).date()) == ["2026-10-31"]
+    # An index there already: nothing is listed again
+    r2.calls.clear()
+    archive._restored.clear()
+    await archive.restore_index()
+    assert archive._restored.is_set() and not r2.calls
+
+
+async def test_restore_waits_for_r2(tmp_path):
+    archive, _, r2, _, _ = build(tmp_path)
+    archive._restored.clear()
+    r2.fail = R2Error("LIST: unreachable")
+    task = asyncio.create_task(archive.restore_index())
+    await settle(lambda: archive.r2_connected is False)
+    r2.fail = None
+    await settle(archive._restored.is_set)
+    await task
+
+
+async def test_quarantine_is_a_problem(tmp_path):
+    archive, _, _, _, _ = build(tmp_path)
+    archive.ha_connected = True
+    archive.queue.quarantine.mkdir(parents=True)
+    (archive.queue.quarantine / "0000000007.json").write_text("kaputt")
+    (archive.queue.quarantine / "0000000007.bin").write_bytes(b"x")
+    assert archive.health() == ["1 objects in quarantine"]
+    for path in archive.queue.quarantine.iterdir():
+        path.unlink()
+    assert archive.health() == []
+
+
+async def test_token_expiry(tmp_path):
+    archive, _, _, cf, clock = build(tmp_path)
+    assert archive.status()["token_expiring"] is None
+    cf.expiry = clock() + timedelta(days=20)
+    task = asyncio.create_task(archive.token_loop())
+    await settle(lambda: archive.token_checked)
+    task.cancel()
+    assert archive.status()["token_expiring"] is False
+    assert json.loads(archive.status()["token_expiring/attributes"])["expires_on"] == cf.expiry.isoformat()
+    clock.moment += timedelta(days=7)
+    assert archive.status()["token_expiring"] is True
+    archive.token_expiry = None
+    assert archive.status()["token_expiring"] is False
