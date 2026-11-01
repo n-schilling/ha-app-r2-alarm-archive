@@ -40,10 +40,17 @@ GROUP_DEPTH = 3
 # Archiving counts as not working when an object waits longer than this, or
 # when a summary is this late
 STUCK_AFTER = 15 * 60
+# A restart of Home Assistant is quiet up to here, then it is worth a warning
+HA_AWAY_WARN = timedelta(minutes=15)
 SUMMARY_GRACE = timedelta(hours=1)
 # api_token: checked daily, warned about this long before it expires
 TOKEN_INTERVAL = 24 * 3600
 TOKEN_WARN = timedelta(days=14)
+
+
+def duration(span: timedelta) -> str:
+    minutes, seconds = divmod(round(span.total_seconds()), 60)
+    return f"{minutes} min {seconds} s" if minutes else f"{seconds} s"
 
 
 def iso(moment: datetime) -> str:
@@ -224,6 +231,8 @@ class Archive:
     # --- Home Assistant -----------------------------------------------------------
     async def ha_loop(self) -> None:
         failures = 0
+        away: datetime | None = None   # since when Home Assistant is gone
+        warned = False
         while True:
             try:
                 await self.ha.connect()
@@ -241,15 +250,30 @@ class Archive:
                 self._ready.set()
                 self.ha_connected = True
                 self._changed()
-                LOGGER.info("Connected to Home Assistant, time zone %s", self.tz.key)
+                if away is None:
+                    LOGGER.info("Connected to Home Assistant, time zone %s", self.tz.key)
+                else:
+                    LOGGER.info("Connected to Home Assistant again after %s, time zone %s",
+                                duration(self.now() - away), self.tz.key)
+                away, warned = None, False
                 async with asyncio.TaskGroup() as tasks:
                     tasks.create_task(self.follow_log())
                     if self.cfg.alarm_panel:
                         tasks.create_task(self.follow_panel())
                     tasks.create_task(self.ha.wait_closed())
             except* HAError as group:
-                LOGGER.warning("Home Assistant: %s; connecting again in %d s", group.exceptions[0],
-                               BACKOFF[min(failures, len(BACKOFF) - 1)])
+                err = group.exceptions[0]
+                delay = BACKOFF[min(failures, len(BACKOFF) - 1)]
+                if not err.down:
+                    LOGGER.warning("Home Assistant: %s; connecting again in %d s", err, delay)
+                elif away is None:
+                    LOGGER.info("Home Assistant %s; connecting again when it is back", err)
+                elif not warned and self.now() - away >= HA_AWAY_WARN:
+                    LOGGER.warning("Home Assistant still away after %s: %s",
+                                   duration(self.now() - away), err)
+                    warned = True
+                if away is None:
+                    away = self.now()
             finally:
                 if self.ha_connected:
                     self.ha_connected = False

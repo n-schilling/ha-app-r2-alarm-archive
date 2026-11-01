@@ -15,8 +15,18 @@ import aiohttp
 CORE = "http://supervisor/core"
 
 
+# What the Supervisor's proxy answers while Core is stopped or starting
+CORE_DOWN = (502, 503, 504)
+
+
 class HAError(Exception):
-    """Home Assistant could not be reached or refused a request."""
+    """Home Assistant could not be reached or refused a request. `down` is set
+    when Home Assistant itself is away (it closed the connection, or the
+    Supervisor cannot reach it): a restart, not a fault of this app."""
+
+    def __init__(self, message: str, down: bool = False) -> None:
+        super().__init__(message)
+        self.down = down
 
 
 class HA:
@@ -29,9 +39,11 @@ class HA:
         self._results: dict[int, asyncio.Future] = {}
         self._streams: dict[int, asyncio.Queue] = {}
         self._reader: asyncio.Task | None = None
+        self._lost: HAError | None = None
 
     # --- Connection -----------------------------------------------------------
     async def connect(self) -> None:
+        self._lost = None
         try:
             self._ws = await self._http.ws_connect(f"{self._base}/websocket".replace("http", "ws", 1),
                                                    heartbeat=30, max_msg_size=0)
@@ -40,6 +52,10 @@ class HA:
                 raise HAError(f"unexpected greeting {hello}")
             await self._ws.send_json({"type": "auth", "access_token": self._token})
             answer = await self._ws.receive_json()
+        except aiohttp.WSServerHandshakeError as err:
+            if err.status in CORE_DOWN:
+                raise HAError(f"is not running (Supervisor answers {err.status})", down=True) from err
+            raise HAError(f"websocket: {err}") from err
         except (aiohttp.ClientError, TimeoutError, TypeError, ValueError) as err:
             raise HAError(f"websocket: {err or type(err).__name__}") from err
         if answer.get("type") != "auth_ok":
@@ -63,10 +79,20 @@ class HA:
             except asyncio.CancelledError:
                 raise
             except Exception as err:
-                raise HAError(f"websocket: {err or type(err).__name__}") from err
-        raise HAError("websocket closed")
+                raise self._lost or HAError(f"websocket: {err or type(err).__name__}") from err
+        raise self._lost or HAError("websocket closed")
+
+    def _why_closed(self) -> HAError:
+        """A closing handshake comes from Home Assistant going away (the
+        Supervisor's proxy passes it on); without one (1006) or after an error
+        the line itself broke, e.g. no answer to the heartbeat."""
+        error = self._ws.exception()
+        if error is not None or self._ws.close_code in (None, aiohttp.WSCloseCode.ABNORMAL_CLOSURE):
+            return HAError(f"connection lost: {error or 'no answer from Home Assistant'}")
+        return HAError("closed the connection (restart or stop)", down=True)
 
     async def _read(self) -> None:
+        lost = HAError("websocket closed")
         try:
             async for msg in self._ws:
                 if msg.type != aiohttp.WSMsgType.TEXT:
@@ -74,10 +100,16 @@ class HA:
                 data = msg.json()
                 for item in data if isinstance(data, list) else [data]:
                     self._dispatch(item)
+            lost = self._why_closed()
+        except Exception as err:
+            lost = HAError(f"connection lost: {err or type(err).__name__}")
+            raise
         finally:
+            # Everyone waiting learns the same reason
+            self._lost = lost
             for future in self._results.values():
                 if not future.done():
-                    future.set_exception(HAError("websocket closed"))
+                    future.set_exception(lost)
             self._results.clear()
             for queue in self._streams.values():
                 queue.put_nowait(None)
@@ -124,7 +156,7 @@ class HA:
             while True:
                 event = await queue.get()
                 if event is None:
-                    raise HAError("websocket closed")
+                    raise self._lost or HAError("websocket closed")
                 yield event
         finally:
             self._streams.pop(msg_id, None)

@@ -2,6 +2,12 @@
 
 All notable changes to this app are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the app uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-11-01
+
+### Changed
+
+- A restart of Home Assistant is one plain line in the log when the connection goes ("Home Assistant closed the connection (restart or stop)") and one when it is back, with how long it was away; the Supervisor's 502 answers while Core starts are no longer warnings. A warning comes only after 15 minutes away, and a broken line (no answer to the heartbeat) or a refused login still warns at once
+
 ## [0.7.0] - 2026-11-01
 
 ### Added

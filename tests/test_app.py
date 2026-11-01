@@ -12,6 +12,7 @@ from conftest import BERLIN, Clock, FakeCloudflare, FakeHA, FakeR2, make_config,
 from r2_archive import app as app_module
 from r2_archive.app import Archive
 from r2_archive.cloudflare import Usage
+from r2_archive.ha import HAError
 from r2_archive.r2 import R2Error
 from r2_archive.store import Queue, State
 
@@ -360,6 +361,56 @@ async def test_stopping_logs_no_warning(tmp_path, caplog):
         await task
     assert not [r for r in caplog.records if r.levelname == "WARNING"]
     assert archive.ha_connected is False
+
+
+async def test_restart_of_home_assistant(tmp_path, monkeypatch, caplog):
+    """A restart is one line when the connection goes and one when it is back;
+    only a long absence or a real fault is a warning."""
+    archive, ha, _, _, clock = build(tmp_path, alarm_panel="")
+    caplog.set_level("INFO", logger=app_module.__name__)
+    restart = HAError("closed the connection (restart or stop)", down=True)
+    away = HAError("is not running (Supervisor answers 502)", down=True)
+    # What each connection attempt meets: connected and then closed, or refused
+    script = [restart, away, away, restart, *[away] * 6, HAError("login refused"), None]
+
+    async def connect():
+        if isinstance(script[0], HAError) and script[0] is not restart:
+            raise script.pop(0)
+
+    async def wait_closed():
+        step = script.pop(0)
+        raise RuntimeError("end of test") if step is None else step
+
+    async def config():
+        return {"time_zone": "Europe/Berlin"}
+
+    async def close():
+        pass
+
+    async def follow_log():
+        await asyncio.Event().wait()
+
+    async def sleep(seconds):
+        clock.moment += timedelta(seconds=seconds)
+    ha.connect, ha.config, ha.wait_closed, ha.close = connect, config, wait_closed, close
+    archive.follow_log = follow_log
+    monkeypatch.setattr(app_module.asyncio, "sleep", sleep)
+    monkeypatch.setattr(app_module, "BACKOFF", (5, 15, 60, 300))
+    with pytest.raises(ExceptionGroup):
+        await archive.ha_loop()
+    lines = [(r.levelname, r.getMessage()) for r in caplog.records]
+    assert lines == [
+        ("INFO", "Connected to Home Assistant, time zone Europe/Berlin"),
+        ("INFO", "Home Assistant closed the connection (restart or stop); "
+                 "connecting again when it is back"),
+        ("INFO", "Connected to Home Assistant again after 1 min 20 s, time zone Europe/Berlin"),
+        ("INFO", "Home Assistant closed the connection (restart or stop); "
+                 "connecting again when it is back"),
+        ("WARNING", "Home Assistant still away after 16 min 20 s: "
+                    "is not running (Supervisor answers 502)"),
+        ("WARNING", "Home Assistant: login refused; connecting again in 300 s"),
+        ("INFO", "Connected to Home Assistant again after 26 min 20 s, time zone Europe/Berlin"),
+    ]
 
 
 async def test_picture_series(tmp_path, monkeypatch):

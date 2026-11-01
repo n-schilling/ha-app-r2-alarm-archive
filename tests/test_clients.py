@@ -17,6 +17,8 @@ class FakeCore:
         self.token = "supervisor-token"
         self.sockets = []
 
+        self.down = False
+
     def app(self):
         app = web.Application()
         app.router.add_get("/websocket", self.websocket)
@@ -31,6 +33,9 @@ class FakeCore:
         return web.Response(status=500)
 
     async def websocket(self, request):
+        if self.down:
+            # The Supervisor's proxy while Core restarts
+            return web.Response(status=502)
         ws = web.WebSocketResponse()
         await ws.prepare(request)
         self.sockets.append(ws)
@@ -105,6 +110,28 @@ async def test_websocket_closed_ends_waits(core):
     with pytest.raises(HAError):
         await ha.wait_closed()
     await ha.close()
+
+
+async def test_restart_is_named(core):
+    """Home Assistant closing the line and the Supervisor's 502 while Core is
+    away both say that Home Assistant is gone, not that the app failed."""
+    fake, ha, _, _ = core
+    await ha.connect()
+    stream = ha.logbook("input_boolean.alarm_log", "2026-10-01T00:00:00+00:00")
+    await anext(stream)
+    await fake.sockets[0].close()
+    with pytest.raises(HAError, match="closed the connection") as closed:
+        async with asyncio.timeout(2):
+            async for _ in stream:
+                pass
+    assert closed.value.down
+    with pytest.raises(HAError, match="closed the connection"):
+        await ha.wait_closed()
+    await ha.close()
+    fake.down = True
+    with pytest.raises(HAError, match="Supervisor answers 502") as refused:
+        await ha.connect()
+    assert refused.value.down
 
 
 async def test_websocket_refused(core):
