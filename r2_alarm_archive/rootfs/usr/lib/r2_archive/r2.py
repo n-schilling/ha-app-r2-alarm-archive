@@ -139,6 +139,12 @@ class R2:
         self._raise("PUT", key, status, data)
         return False
 
+    async def check(self) -> None:
+        """Whether R2 answers and takes the key: HeadBucket, one Class B operation."""
+        status, data = await self._request("HEAD")
+        if status != 200:
+            self._raise("HEAD", "", status, data)
+
     async def get(self, key: str) -> bytes:
         status, data = await self._request("GET", key)
         if status != 200:

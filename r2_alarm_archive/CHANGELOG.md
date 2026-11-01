@@ -2,6 +2,12 @@
 
 All notable changes to this app are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the app uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-11-01
+
+### Added
+
+- The app checks the R2 connection at start and every `r2_check_interval` minutes (default 15, one Class B operation each): *R2 connection* no longer stays unknown for hours after a start, and an outage shows also while nothing is uploaded
+
 ## [0.6.1] - 2026-11-01
 
 ### Fixed

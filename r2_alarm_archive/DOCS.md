@@ -84,6 +84,7 @@ The list options (`snapshot_entities`, `cameras`) have no entity picker in the a
 | `camera_states` | `triggered` | Panel states whose snapshots also get pictures; each must be in `snapshot_states` |
 | `camera_pictures` | `3` | Pictures per camera and snapshot, 1 to 10; from 2 a series |
 | `camera_interval` | `10` | Seconds between the pictures of a series, 1 to 60 |
+| `r2_check_interval` | `15` | Minutes between checks of the R2 connection, 1 to 1440; one Class B operation each |
 | `retention_log`, `retention_snapshots`, `retention_summaries` | `unlimited`, `365`, `unlimited` | Days, or `unlimited`; checked, not set |
 | `lock_log`, `lock_snapshots`, `lock_summaries` | `off` | `off`, `indefinite` or days; checked, not set |
 | `discovery_prefix` | `homeassistant` | MQTT discovery prefix |
@@ -97,7 +98,7 @@ One device *R2 Alarm Archive*:
 | Entity | Meaning |
 |---|---|
 | Archiving | **The one for dashboards.** On while archiving works; off with the reasons in its attribute `problems`: Home Assistant not connected, R2 not reachable, the last upload failed, an object waits longer than 15 minutes, objects lie in the quarantine, the free tier limit is reached or no usage figure is there, a summary is more than an hour late |
-| R2 connection | Off only when R2 cannot be reached (network, R2 itself). An answer with an error, such as a refused key, counts as connected and goes to the log |
+| R2 connection | Off only when R2 cannot be reached (network, R2 itself). An answer with an error, such as a refused key, counts as connected and goes to the log. Checked at start and every `r2_check_interval` minutes, and with every upload |
 | Queue | Objects waiting for R2 |
 | Last upload, Last summary | When R2 last confirmed an object, when the last summary was written |
 | Free tier usage | The highest of the three figures in % of the free tier; all three as attributes |

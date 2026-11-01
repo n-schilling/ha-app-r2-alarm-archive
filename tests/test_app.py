@@ -443,3 +443,36 @@ async def test_token_expiry(tmp_path):
     assert archive.status()["token_expiring"] is True
     archive.token_expiry = None
     assert archive.status()["token_expiring"] is False
+
+
+async def test_connection_check(tmp_path, monkeypatch):
+    archive, _, r2, _, _ = build(tmp_path, r2_check_interval=5)
+    sleeps = []
+
+    async def sleep(seconds):
+        sleeps.append(seconds)
+        if len(sleeps) >= 3:
+            raise asyncio.CancelledError
+    monkeypatch.setattr(app_module.asyncio, "sleep", sleep)
+    assert archive.r2_connected is None
+    with contextlib.suppress(asyncio.CancelledError):
+        await archive.check_loop()
+    assert archive.r2_connected is True and sleeps == [300, 300, 300]
+    assert archive.guard.own["class_b"] == 3
+    # Unreachable: off; refused key: still connected
+    sleeps.clear()
+    r2.fail = R2Error("HEAD: timeout")
+    with contextlib.suppress(asyncio.CancelledError):
+        await archive.check_loop()
+    assert archive.r2_connected is False
+    sleeps.clear()
+    r2.fail = R2Error("HEAD: HTTP 403", 403, "AccessDenied")
+    with contextlib.suppress(asyncio.CancelledError):
+        await archive.check_loop()
+    assert archive.r2_connected is True
+    # Without a usage figure: no check, again in a minute
+    sleeps.clear()
+    archive.guard.usage = None
+    with contextlib.suppress(asyncio.CancelledError):
+        await archive.check_loop()
+    assert sleeps == [60, 60, 60]

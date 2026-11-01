@@ -65,6 +65,11 @@ class FakeR2:
             raise R2Error(f"GET {key}: HTTP 404", 404, "NoSuchKey")
         return self.objects[key]
 
+    async def check(self):
+        self.calls.append(("HEAD", ""))
+        if self.fail:
+            raise self.fail
+
     async def list(self, prefix):
         self.calls.append(("LIST", prefix))
         if self.fail:

@@ -46,6 +46,9 @@ configuration:
   camera_interval:
     name: Sekunden zwischen den Bildern
     description: "Abstand der Bildserie, 1 bis 60 Sekunden."
+  r2_check_interval:
+    name: Prüfintervall R2
+    description: "Minuten zwischen zwei Prüfungen der R2-Verbindung (1 bis 1440). Jede Prüfung ist eine Class-B-Operation, alle 15 Minuten etwa 3.000 im Monat."
   retention_log:
     name: Aufbewahrung Protokoll
     description: "unlimited oder Tage. Die App prüft, ob der Bucket eine passende Lifecycle-Regel hat; sie setzt sie nicht."

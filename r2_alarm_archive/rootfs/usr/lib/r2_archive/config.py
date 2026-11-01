@@ -41,6 +41,7 @@ class Config:
     camera_states: tuple[str, ...]     # snapshots that also get pictures
     camera_pictures: int               # pictures per camera and snapshot, a series
     camera_interval: int               # seconds between the pictures of a series
+    r2_check_interval: int             # minutes between checks of the R2 connection
     retention: dict[str, int | None]   # kind -> days, None = unlimited
     lock: dict[str, int | str | None]  # kind -> days, "indefinite", None = off
     mqtt_host: str
@@ -127,6 +128,7 @@ def load(path: Path = OPTIONS, mqtt_service=supervisor_mqtt) -> Config:
                           "pictures are taken only with a snapshot")
     camera_pictures = _number("camera_pictures", opts.get("camera_pictures", 1), 1, 10)
     camera_interval = _number("camera_interval", opts.get("camera_interval", 10), 1, 60)
+    r2_check_interval = _number("r2_check_interval", opts.get("r2_check_interval", 15), 1, 1440)
 
     retention = {k: _days(f"retention_{k}", opts.get(f"retention_{k}", "unlimited"),
                           {"unlimited": None}) for k in KINDS}
@@ -168,6 +170,7 @@ def load(path: Path = OPTIONS, mqtt_service=supervisor_mqtt) -> Config:
         camera_states=camera_states,
         camera_pictures=camera_pictures,
         camera_interval=camera_interval,
+        r2_check_interval=r2_check_interval,
         retention=retention,
         lock=lock,
         mqtt_host=mqtt["host"],

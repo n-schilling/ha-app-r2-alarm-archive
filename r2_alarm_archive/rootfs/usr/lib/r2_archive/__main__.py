@@ -102,6 +102,7 @@ async def run(cfg: cfg_module.Config) -> None:
             tasks.create_task(archive.restore_index())
             tasks.create_task(archive.ha_loop())
             tasks.create_task(archive.upload_loop())
+            tasks.create_task(archive.check_loop())
             tasks.create_task(archive.usage_loop())
             tasks.create_task(archive.rules_loop())
             tasks.create_task(archive.token_loop())

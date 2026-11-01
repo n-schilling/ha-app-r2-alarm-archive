@@ -46,6 +46,9 @@ configuration:
   camera_interval:
     name: Seconds between pictures
     description: "Interval of the picture series, 1 to 60 seconds."
+  r2_check_interval:
+    name: R2 check interval
+    description: "Minutes between checks of the R2 connection (1 to 1440). Each check is one Class B operation, every 15 minutes about 3,000 a month."
   retention_log:
     name: Retention of the log
     description: "unlimited or days. The app checks that the bucket has a matching lifecycle rule; it does not set it."

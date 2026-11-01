@@ -196,6 +196,25 @@ class Archive:
             LOGGER.debug("%s %s", "Uploaded" if created else "Already in R2:", item.key)
             self._changed()
 
+    async def check_loop(self) -> None:
+        """Checks the R2 connection at start and every r2_check_interval
+        minutes, so it is known also when nothing is uploaded for hours."""
+        while True:
+            loop_now = asyncio.get_running_loop().time()
+            # Without a usage figure the guard allows nothing: try again soon
+            if self.guard.allows(loop_now, utc_month(self.now()), class_b=1):
+                try:
+                    await self.r2.check()
+                except R2Error as err:
+                    self._set_r2(not err.unreachable)
+                    LOGGER.warning("R2 check: %s", err)
+                else:
+                    self._set_r2(True)
+                self.guard.count(class_b=1)
+                await asyncio.sleep(self.cfg.r2_check_interval * 60)
+            else:
+                await asyncio.sleep(60)
+
     async def _sleep_or_wake(self, seconds: float) -> None:
         with contextlib.suppress(TimeoutError):
             async with asyncio.timeout(seconds):
