@@ -160,7 +160,8 @@ STYLE = """
   --sidebar-text-color: #212121; --sidebar-icon-color: rgba(0,0,0,.5);
   --app-header-border-bottom: 1px solid var(--divider-color); --ha-card-border-radius: 12px;
   --ha-card-border-width: 1px; --ha-card-border-color: var(--divider-color); --ha-card-box-shadow: none;
-  --ha-font-family-body: Roboto, Noto, sans-serif; --data-table-background-color: var(--card-background-color); }
+  --ha-font-family-body: Roboto, Noto, sans-serif; --data-table-background-color: var(--card-background-color);
+  --header-height: 56px; }
 @media (prefers-color-scheme: dark) { :root { --primary-background-color: #111; --secondary-background-color: #282828;
   --card-background-color: #1c1c1c; --primary-text-color: #e1e1e1; --secondary-text-color: #9b9b9b;
   --divider-color: rgba(225,225,225,.12); --sidebar-background-color: #1c1c1c; --sidebar-text-color: #e1e1e1;
@@ -170,8 +171,8 @@ html, body { margin: 0; background: var(--primary-background-color); color: var(
   font: 14px/1.6 var(--ha-font-family-body); -webkit-font-smoothing: antialiased; }
 a { color: var(--primary-color); text-decoration: none; }
 svg { width: 24px; height: 24px; fill: currentColor; flex: none; }
-header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; min-height: 64px;
-  padding: 8px 12px; background: var(--sidebar-background-color); color: var(--sidebar-text-color);
+header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; height: var(--header-height);
+  padding: 0 12px; background: var(--sidebar-background-color); color: var(--sidebar-text-color);
   border-bottom: var(--app-header-border-bottom); }
 header .back { display: flex; align-items: center; justify-content: center; width: 48px; height: 48px;
   border-radius: 50%; color: var(--sidebar-icon-color); }
@@ -255,7 +256,7 @@ THEME_VARS = ("primary-background-color", "secondary-background-color", "card-ba
               "warning-color", "error-color", "sidebar-background-color", "sidebar-text-color",
               "sidebar-icon-color", "app-header-border-bottom", "ha-card-border-radius", "ha-card-border-width",
               "ha-card-border-color", "ha-card-box-shadow", "ha-font-family-body",
-              "data-table-background-color")
+              "data-table-background-color", "header-height")
 SCRIPT = """(() => { try {
   const outer = window.parent.document.documentElement;
   if (outer === document.documentElement) return;
