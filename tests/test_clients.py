@@ -156,3 +156,15 @@ async def test_cloudflare(aiohttp_server):
         fake.status = 403
         with pytest.raises(CloudflareError, match="refused"):
             await api.usage(datetime(2026, 10, 31, tzinfo=UTC))
+
+
+async def test_stop_is_no_lost_connection(core):
+    """Cancelling the wait (the app stops) must not turn into 'websocket closed'."""
+    _, ha, _, _ = core
+    await ha.connect()
+    waiter = asyncio.create_task(ha.wait_closed())
+    await asyncio.sleep(0.05)
+    waiter.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiter
+    await ha.close()

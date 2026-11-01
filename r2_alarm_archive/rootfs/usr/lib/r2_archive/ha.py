@@ -55,10 +55,15 @@ class HA:
             await self._ws.close()
 
     async def wait_closed(self) -> None:
-        """Returns when the websocket is gone; raises HAError then."""
+        """Returns when the websocket is gone; raises HAError then. A stop of
+        the app is no lost connection: its cancellation passes through."""
         if self._reader:
-            with contextlib.suppress(asyncio.CancelledError):
+            try:
                 await self._reader
+            except asyncio.CancelledError:
+                raise
+            except Exception as err:
+                raise HAError(f"websocket: {err or type(err).__name__}") from err
         raise HAError("websocket closed")
 
     async def _read(self) -> None:

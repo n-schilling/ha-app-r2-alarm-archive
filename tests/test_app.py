@@ -333,3 +333,29 @@ async def test_pictures_only_for_camera_states(tmp_path):
     meta = json.loads(r2.objects[disarmed + "meta.json"])
     assert meta["cameras"] == {} and meta["missing_cameras"] == []
     assert triggered + "kamera_front.jpg" in r2.objects
+
+
+async def test_stopping_logs_no_warning(tmp_path, caplog):
+    archive, ha, _, _, _ = build(tmp_path)
+
+    async def connect():
+        pass
+
+    async def config():
+        return {"time_zone": "Europe/Berlin"}
+
+    async def wait_closed():
+        await asyncio.Event().wait()
+
+    async def close():
+        pass
+
+    ha.connect, ha.config, ha.wait_closed, ha.close = connect, config, wait_closed, close
+    archive.cfg = make_config(tmp_path, alarm_panel="")
+    task = asyncio.create_task(archive.ha_loop())
+    await settle(lambda: archive.ha_connected)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert not [r for r in caplog.records if r.levelname == "WARNING"]
+    assert archive.ha_connected is False
