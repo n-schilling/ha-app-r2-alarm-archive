@@ -264,8 +264,12 @@ class Web:
                 if state["entity_id"].startswith("person.") and \
                         (state.get("attributes") or {}).get("user_id") == user_id:
                     return str(state["attributes"].get("friendly_name") or state["entity_id"])
+            # Users without a person, e.g. a wall display's login
+            for user in await self.archive.ha.call({"type": "config/auth/list"}):
+                if user.get("id") == user_id and user.get("name"):
+                    return str(user["name"])
         except Exception as err:  # the page still shows the ID
-            LOGGER.debug("No person for %s: %s", user_id, err)
+            LOGGER.debug("No name for %s: %s", user_id, err)
         return user_id
 
     def day_text(self, day: str) -> str:

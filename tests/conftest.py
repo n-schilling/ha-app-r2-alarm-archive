@@ -78,6 +78,7 @@ class FakeHA:
 
     def __init__(self):
         self.state_list: list[dict] = []
+        self.users: list[dict] = []
         self.history_data: dict[str, list[dict]] = {}
         self.history_calls: list[tuple] = []
         self.pictures: dict[str, bytes] = {"camera.front": b"\xff\xd8jpeg"}
@@ -87,6 +88,10 @@ class FakeHA:
 
     async def states(self):
         return self.state_list
+
+    async def call(self, message):
+        assert message == {"type": "config/auth/list"}
+        return self.users
 
     async def history(self, entity_ids, start, end=None, attributes=True):
         self.history_calls.append((tuple(entity_ids), start, end))

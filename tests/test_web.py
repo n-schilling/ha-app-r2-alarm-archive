@@ -157,3 +157,12 @@ def test_cache_limit(tmp_path):
 def test_problem_texts():
     assert problem_text("3 objects waiting, the oldest for 20 min", "de") == "3 Objekte warten, das älteste seit 20 min"
     assert problem_text("R2 not reachable", "en") == "R2 not reachable"
+
+
+async def test_user_without_person(tmp_path):
+    archive, _ = seeded(tmp_path)
+    archive.ha.users = [{"id": "wd", "name": "Wall Display"}]
+    web = Web(archive, Cache(tmp_path / "cache"))
+    assert await web.user_name("wd") == "Wall Display"
+    assert await web.user_name("u1") == "Kim"
+    assert await web.user_name("nobody") == "nobody"
