@@ -9,6 +9,18 @@
 
 A Home Assistant app (formerly add-on) that keeps the alarm log outside the house: it follows the log in the recorder and puts every entry into a Cloudflare R2 bucket, adds a snapshot of states and camera pictures whenever the alarm panel changes, and writes a summary of each day. Objects are created once and never overwritten; an optional free tier guard keeps the whole Cloudflare account 10 % below the limits of R2's free tier. A read-only page in the sidebar shows the archive, its days, snapshots and pictures, and the free tier in detail, without going to the Cloudflare dashboard.
 
+## The web page
+
+The page in the sidebar looks like Home Assistant's settings and takes over the theme in use. The screenshots show made-up demo data.
+
+| Menu | Details by month |
+|---|---|
+| ![Menu with Overview, Details, Queue and Settings](docs/screenshots/menu.png) | ![Archived days as a table grouped by month](docs/screenshots/details.png) |
+| **Overview** | **A day** |
+| ![Status, free tier usage and bucket rules](docs/screenshots/overview.png) | ![Log, snapshots and summary of one day](docs/screenshots/day.png) |
+| **Only days with an alarm** | **A snapshot with a picture series** |
+| ![Filter for days with an alarm](docs/screenshots/alarm-filter.png) | ![Change, user, pictures and states of a snapshot](docs/screenshots/snapshot.png) |
+
 ## Installation
 
 1. Add the repository to your Home Assistant instance:
