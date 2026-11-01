@@ -396,7 +396,8 @@ async def test_index_is_read_from_r2_when_empty(tmp_path):
     assert sorted(data["uploaded"]) == ["2026-10-30", "2026-10-31"]
     assert data["summaries"]["2026-10-30"]["files"] == 2
     assert folder in data["summaries"]["2026-10-30"]["covered"]
-    assert data["installed"] == "2026-10-30"
+    # Days without anything get no summary afterwards, as with the first start
+    assert data["installed"] is None
     # The 30th needs no new summary, the 31st does
     assert archive._summary_days(datetime(2026, 11, 1).date()) == ["2026-10-31"]
     # An index there already: nothing is listed again

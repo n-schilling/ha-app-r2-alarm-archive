@@ -420,8 +420,6 @@ class Archive:
                 folders = {k.rsplit("/", 1)[0] + "/" for k in keys if k.startswith(a.PREFIX["snapshots"])}
                 done = data["summaries"].setdefault(day, {"covered": sorted(set(keys) | folders), "files": 0})
                 done["files"] = max(done["files"], part + 1)
-        if data["summaries"] and not data["installed"]:
-            data["installed"] = min(data["summaries"])
         self.state.save()
         if found["log"] or found["snapshots"] or found["summaries"]:
             LOGGER.info("Index read from R2: %d log entries, %d snapshot files, %d summaries of %d days",

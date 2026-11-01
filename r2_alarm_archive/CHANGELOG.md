@@ -2,6 +2,12 @@
 
 All notable changes to this app are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the app uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] - 2026-11-01
+
+### Fixed
+
+- Reading the index from R2 no longer moves the install date back, which would have written empty summaries for days without entries
+
 ## [0.6.0] - 2026-11-01
 
 ### Added
