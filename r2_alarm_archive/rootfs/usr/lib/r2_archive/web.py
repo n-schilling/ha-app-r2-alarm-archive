@@ -30,7 +30,7 @@ from .store import write_atomic
 
 LOGGER = logging.getLogger(__name__)
 
-PORT = 8099
+PORT = 8099              # the Supervisor's default ingress port
 # The Supervisor's ingress proxy; nothing else may talk to the page
 INGRESS_PEER = "172.30.32.2"
 CACHE_BYTES = 200 * 10**6
