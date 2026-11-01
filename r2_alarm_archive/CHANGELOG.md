@@ -2,6 +2,17 @@
 
 All notable changes to this app are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the app uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-11-01
+
+### Added
+
+- A read-only web page in Home Assistant's sidebar (ingress, administrators only, German or English after Home Assistant's language): overview with the free tier in detail (absolute figures for the account and this bucket, projection to the end of the month, storage growth and days until the guard's limit), the archived days with their log, snapshots with states and pictures, the queue; every file can be downloaded
+- Objects read for the page are kept in a cache in `/data` (up to 200 MB); reads count against the free tier guard
+
+### Changed
+
+- The free tier usage also tells this bucket's share of operations and storage
+
 ## [0.3.1] - 2026-11-01
 
 ### Fixed

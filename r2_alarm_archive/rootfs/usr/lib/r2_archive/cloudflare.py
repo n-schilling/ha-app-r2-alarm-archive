@@ -30,7 +30,7 @@ query R2Usage($account: string!, $monthStart: Time!, $dayStart: Time!, $end: Tim
       operations: r2OperationsAdaptiveGroups(
         limit: 10000, filter: {datetime_geq: $monthStart, datetime_leq: $end}) {
         sum { requests }
-        dimensions { actionType }
+        dimensions { actionType bucketName }
       }
       storage: r2StorageAdaptiveGroups(
         limit: 10000, filter: {datetime_geq: $dayStart, datetime_leq: $end}) {
@@ -53,29 +53,43 @@ class Usage:
     class_a: int
     class_b: int
     storage_bytes: int       # all buckets, highest value of the last 24 hours
+    # The share of the archive's own bucket in the figures above
+    bucket_class_a: int = 0
+    bucket_class_b: int = 0
+    bucket_storage_bytes: int = 0
 
 
 def month_start(now: datetime) -> datetime:
     return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
 
 
-def parse_usage(data: dict) -> Usage:
+def bucket_names(bucket: str, jurisdiction: str) -> set[str]:
+    """How GraphQL may name the bucket: a bucket with a jurisdiction carries it as prefix."""
+    return {bucket} if jurisdiction == "default" else {bucket, f"{jurisdiction}_{bucket}"}
+
+
+def parse_usage(data: dict, own: set[str] = frozenset()) -> Usage:
     try:
         account = data["data"]["viewer"]["accounts"][0]
     except (KeyError, IndexError, TypeError) as err:
         raise CloudflareError(f"no R2 usage in the answer: {data.get('errors') or data}") from err
-    class_a = class_b = 0
+    ops = {"a": 0, "b": 0, "own_a": 0, "own_b": 0}
     for group in account.get("operations") or []:
-        action = (group.get("dimensions") or {}).get("actionType")
+        dims = group.get("dimensions") or {}
         requests = int((group.get("sum") or {}).get("requests") or 0)
-        if action in CLASS_A:
-            class_a += requests
-        elif action in CLASS_B:
-            class_b += requests
-    storage = sum(int((g.get("max") or {}).get("payloadSize") or 0)
-                  + int((g.get("max") or {}).get("metadataSize") or 0)
-                  for g in account.get("storage") or [])
-    return Usage(class_a, class_b, storage)
+        kind = "a" if dims.get("actionType") in CLASS_A else "b" if dims.get("actionType") in CLASS_B else None
+        if kind:
+            ops[kind] += requests
+            if dims.get("bucketName") in own:
+                ops["own_" + kind] += requests
+    storage = own_storage = 0
+    for group in account.get("storage") or []:
+        size = int((group.get("max") or {}).get("payloadSize") or 0) \
+            + int((group.get("max") or {}).get("metadataSize") or 0)
+        storage += size
+        if (group.get("dimensions") or {}).get("bucketName") in own:
+            own_storage += size
+    return Usage(ops["a"], ops["b"], storage, ops["own_a"], ops["own_b"], own_storage)
 
 
 class Cloudflare:
@@ -87,6 +101,7 @@ class Cloudflare:
             self._headers["cf-r2-jurisdiction"] = jurisdiction
         self._account = account_id
         self._bucket = bucket
+        self._jurisdiction = jurisdiction
         self._api = api
         self._timeout = aiohttp.ClientTimeout(total=30)
 
@@ -111,7 +126,7 @@ class Cloudflare:
                                 json={"query": USAGE_QUERY, "variables": variables})
         if data.get("errors"):
             raise CloudflareError(f"GraphQL: {data['errors'][0].get('message', data['errors'])}")
-        return parse_usage(data)
+        return parse_usage(data, bucket_names(self._bucket, self._jurisdiction))
 
     async def _rules(self, what: str) -> list[dict]:
         data = await self._json(

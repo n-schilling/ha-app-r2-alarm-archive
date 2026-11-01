@@ -95,6 +95,9 @@ def test_parse_usage():
                     {"max": {"payloadSize": 50, "metadataSize": 0}, "dimensions": {"bucketName": "b"}}],
     }]}}}
     assert parse_usage(data) == Usage(7, 7, 151)
+    for group in data["data"]["viewer"]["accounts"][0]["operations"]:
+        group["dimensions"]["bucketName"] = "eu_a" if group["dimensions"]["actionType"] == "PutObject" else "b"
+    assert parse_usage(data, {"a", "eu_a"}) == Usage(7, 7, 151, 5, 0, 101)
 
 
 # --- Keys, objects, summaries ----------------------------------------------------

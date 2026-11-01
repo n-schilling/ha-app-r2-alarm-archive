@@ -16,6 +16,17 @@ The app reads the log from Home Assistant's recorder and resumes where it stoppe
 - **Daily summary.** At 00:05 local time (Home Assistant's time zone) the app writes `zusammenfassung/YYYY/MM/YYYY-MM-DD.txt`: one line per entry of the day before, its snapshots, and the SHA-256 of every entry. It is built from what is in R2, so it shows what really arrived. It waits until nothing of that day is in the queue. Entries that reach R2 after the summary go into `…-nachtrag-1.txt`, `-2` and so on.
 - **Folders** follow the local date, times inside the objects are UTC.
 
+## Web page
+
+The app adds a page **Alarm Archive** to Home Assistant's sidebar (for administrators only). It reads, it never changes anything, and it reaches the browser only through Home Assistant, so no port is opened. It follows Home Assistant's language (German or English):
+
+- **Overview:** whether archiving works and why not, the R2 connection, the queue, last upload and summary; the free tier with absolute figures for the whole account and this bucket, the guard's limits, a projection to the end of the month, the storage growth per day and when the guard's limit would be reached; the bucket rules, with the Wrangler commands when they differ.
+- **Days:** every archived day with its entries, snapshots and summaries. A day shows its log lines, links to its snapshots and its summary files.
+- **Snapshot:** the change, the user, the states as a table and the camera pictures.
+- **Queue:** what waits on the machine, and since when.
+
+Every file can be downloaded, e.g. a summary or a picture to hand on. Objects in the bucket never change, so the app keeps what it read in a cache in `/data` (up to 200 MB). Reads from R2 count against the free tier guard; at its limit the page shows only what the cache has.
+
 ## Free tier guard
 
 R2's free tier is per Cloudflare account, not per bucket: 10 GB-month of storage, 1 million Class A and 10 million Class B operations a month (Standard storage only). With `free_tier_guard` on, the app keeps the **whole account**, including everything else you run on it, **10 % below every one of these limits**:

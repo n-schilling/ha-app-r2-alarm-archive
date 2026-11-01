@@ -1,5 +1,5 @@
 name: R2 Alarm Archive
-version: "0.3.1"
+version: "0.4.0"
 slug: r2_alarm_archive
 description: Archives the alarm log and snapshots of your Home Assistant alarm panel in a Cloudflare R2 bucket
 url: https://github.com/n-schilling/ha-app-r2-alarm-archive
@@ -8,6 +8,10 @@ arch:
   - amd64
 init: false
 homeassistant_api: true
+ingress: true
+ingress_port: 8099
+panel_icon: mdi:archive-lock-outline
+panel_title: Alarm Archive
 services:
   - mqtt:want
 options:

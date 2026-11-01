@@ -22,6 +22,7 @@ from .cloudflare import Cloudflare
 from .ha import HA
 from .r2 import R2
 from .store import Queue, State
+from .web import Cache, Web
 
 LOGGER = logging.getLogger("r2_archive")
 DATA = Path("/data")
@@ -101,6 +102,7 @@ async def run(cfg: cfg_module.Config) -> None:
             tasks.create_task(archive.usage_loop())
             tasks.create_task(archive.rules_loop())
             tasks.create_task(archive.summary_loop())
+            tasks.create_task(Web(archive, Cache(DATA / "cache")).run())
 
 
 def main() -> None:

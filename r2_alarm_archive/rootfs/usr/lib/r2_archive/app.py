@@ -59,6 +59,7 @@ class Archive:
         self.now = clock
         self.guard = Guard(enabled=cfg.free_tier_guard)
         self.tz: ZoneInfo | None = None
+        self.language = "en"
         self.r2_connected: bool | None = None
         self.ha_connected = False
         self.upload_error: str | None = None      # the last upload failed with this
@@ -192,6 +193,7 @@ class Archive:
                 failures = 0
                 config = await self.ha.config()
                 try:
+                    self.language = str(config.get("language") or "en")
                     self.tz = ZoneInfo(config.get("time_zone") or "UTC")
                 except ZoneInfoNotFoundError:
                     LOGGER.warning("Unknown time zone %s; using UTC", config.get("time_zone"))
@@ -354,10 +356,23 @@ class Archive:
                 LOGGER.warning("R2 usage not read: %s", err)
             else:
                 self.guard.update(usage, asyncio.get_running_loop().time(), utc_month(now))
+                self._storage_sample(now, usage)
                 LOGGER.debug("R2 usage: %s", usage)
                 self._wake.set()
             self._changed()
             await asyncio.sleep(self._next_usage_poll())
+
+    def _storage_sample(self, now: datetime, usage) -> None:
+        """Keeps the highest storage per UTC day for the growth estimate (60 days)."""
+        days = self.state.data["storage_days"]
+        day = now.astimezone(UTC).date().isoformat()
+        old = days.get(day) or [0, 0]
+        new = [max(old[0], usage.storage_bytes), max(old[1], usage.bucket_storage_bytes)]
+        if new != old:
+            days[day] = new
+            for stale in sorted(days)[:-60]:
+                del days[stale]
+            self.state.save()
 
     def _next_usage_poll(self) -> float:
         """Every 15 minutes, and right after the month changes: last month's

@@ -129,6 +129,7 @@ class State:
         self.data.setdefault("summaries", {})         # day -> {"covered": [...], "files": n}
         self.data.setdefault("last_upload", None)
         self.data.setdefault("last_summary", None)
+        self.data.setdefault("storage_days", {})      # UTC date -> [account bytes, bucket bytes]
 
     def save(self) -> None:
         write_atomic(self._path, json.dumps(self.data, separators=(",", ":")).encode())
