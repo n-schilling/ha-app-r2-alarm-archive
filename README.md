@@ -7,11 +7,11 @@
 ![Supports aarch64](https://img.shields.io/badge/aarch64-yes-green.svg)
 ![Supports amd64](https://img.shields.io/badge/amd64-yes-green.svg)
 
-A Home Assistant app (formerly add-on) that keeps the alarm log outside the house: it follows the log in the recorder and puts every entry into a Cloudflare R2 bucket, adds a snapshot of states and camera pictures whenever the alarm panel changes, and writes a summary of each day. Objects are created once and never overwritten; an optional free tier guard keeps the whole Cloudflare account 10 % below the limits of R2's free tier. A read-only page in the sidebar shows the archive, its days, snapshots and pictures, and the free tier in detail, without going to the Cloudflare dashboard.
+A Home Assistant app that keeps the alarm log outside the house: it follows the log in the recorder and puts every entry into a Cloudflare R2 bucket, adds a snapshot of states and camera pictures whenever the alarm panel changes, and writes a summary of each day. Objects are created once and never overwritten; an optional free tier guard keeps the whole Cloudflare account 10 % below the limits of R2's free tier. A read-only page of its own in Home Assistant shows the archive, its days, snapshots and pictures, and the free tier in detail, without going to the Cloudflare dashboard.
 
 ## The web page
 
-The page in the sidebar looks like Home Assistant's settings and takes over the theme in use. The screenshots show made-up demo data.
+The page (**Open web UI** on the app's page, or in the sidebar with **Show in sidebar**) looks like Home Assistant's settings and takes over the theme in use. The screenshots show made-up demo data.
 
 | Menu | Details by month |
 |---|---|
