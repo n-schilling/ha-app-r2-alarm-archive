@@ -1,6 +1,6 @@
 """Home Assistant through the Supervisor's proxy: the websocket for the
-logbook stream, panel changes, states and history, and the REST API for
-camera pictures."""
+logbook stream, panel changes, snapshot requests, states and history, and
+the REST API for camera pictures."""
 
 from __future__ import annotations
 
@@ -13,6 +13,8 @@ from typing import Any
 import aiohttp
 
 CORE = "http://supervisor/core"
+# The event an automation fires to ask for a snapshot
+SNAPSHOT_EVENT = "r2_alarm_archive_snapshot"
 
 
 # What the Supervisor's proxy answers while Core is stopped or starting
@@ -177,6 +179,11 @@ class HA:
     def panel_changes(self, entity_id: str) -> AsyncIterator[dict]:
         return self.subscribe({"type": "subscribe_trigger",
                                "trigger": {"platform": "state", "entity_id": entity_id}})
+
+    def snapshot_requests(self) -> AsyncIterator[dict]:
+        """Events of type r2_alarm_archive_snapshot as they are fired; those
+        fired while the websocket is closed are gone."""
+        return self.subscribe({"type": "subscribe_events", "event_type": SNAPSHOT_EVENT})
 
     async def history(self, entity_ids: list[str], start: str, end: str | None = None,
                       attributes: bool = True) -> dict[str, list[dict]]:

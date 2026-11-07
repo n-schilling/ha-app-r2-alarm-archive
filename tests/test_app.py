@@ -527,3 +527,104 @@ async def test_connection_check(tmp_path, monkeypatch):
     with contextlib.suppress(asyncio.CancelledError):
         await archive.check_loop()
     assert sleeps == [60, 60, 60]
+
+
+def request_event(when, reason=None, user=None):
+    data = {} if reason is None else {"reason": reason}
+    return {"event_type": "r2_alarm_archive_snapshot", "data": data, "origin": "LOCAL",
+            "time_fired": when.isoformat(), "context": {"id": "c1", "user_id": user}}
+
+
+async def test_snapshot_on_request(tmp_path, monkeypatch):
+    # The panel is disarmed and pictures only come with triggered; a request
+    # takes them anyway, as a series
+    archive, ha, r2, _, clock = build(tmp_path, camera_states=["triggered"], camera_pictures=2,
+                                      camera_interval=1)
+    real_sleep = asyncio.sleep
+    monkeypatch.setattr(app_module.asyncio, "sleep", lambda seconds: real_sleep(min(seconds, 0.01)))
+    ha.state_list = [
+        {"entity_id": PANEL, "state": "disarmed", "attributes": {"changed_by": "Kim"}, "last_changed": "t"},
+        {"entity_id": "binary_sensor.doors_and_windows", "state": "on", "attributes": {}},
+        {"entity_id": "light.unrelated", "state": "on", "attributes": {}},
+    ]
+    when = datetime(2026, 10, 31, 10, 17, 33, 250000, tzinfo=UTC)
+    async with running(archive.follow_requests(), archive.upload_loop()):
+        await ha.request_events.put(request_event(when, "  Guest opened\n the study  ", user="u7"))
+        await settle(lambda: len(r2.objects) == 4)
+    folder = "snapshots/2026/10/31/20261031T101733.250000Z_request/"
+    assert sorted(r2.objects) == [folder + n for n in ("kamera_front.jpg", "kamera_front_2.jpg",
+                                                       "meta.json", "zustand.json.gz")]
+    meta = json.loads(r2.objects[folder + "meta.json"])
+    assert meta["from"] == "disarmed" and meta["to"] == "request" and meta["reason"] == "Guest opened the study"
+    assert meta["time"] == when.isoformat() and meta["user_id"] == "u7" and not meta["reconstructed"]
+    assert meta["attributes"] == {"changed_by": "Kim"} and meta["panel"] == PANEL
+    assert meta["series"] == {"camera.front": ["kamera_front.jpg", "kamera_front_2.jpg"]}
+    states = unzip(r2.objects[folder + "zustand.json.gz"])
+    assert [s["entity_id"] for s in states["states"]] == [PANEL, "binary_sensor.doors_and_windows"]
+    # A request moves no panel cursor: nothing about it is rebuilt later
+    assert archive.state.data["panel_cursor"] is None
+
+
+async def test_snapshot_on_request_without_panel(tmp_path):
+    archive, ha, r2, _, _ = build(tmp_path, alarm_panel="", camera_pictures=1,
+                                  snapshot_entities=["binary_sensor.study_door"])
+    ha.state_list = [{"entity_id": "binary_sensor.study_door", "state": "on", "attributes": {}},
+                     {"entity_id": "light.unrelated", "state": "on", "attributes": {}}]
+    when = datetime(2026, 10, 31, 10, 17, 33, tzinfo=UTC)
+    async with running(archive.follow_requests(), archive.upload_loop()):
+        await ha.request_events.put(request_event(when, "x" * 500))
+        await ha.request_events.put({**request_event(when + timedelta(minutes=1)), "data": None})
+        await settle(lambda: len(r2.objects) == 6)
+    first = "snapshots/2026/10/31/20261031T101733.000000Z_request/"
+    meta = json.loads(r2.objects[first + "meta.json"])
+    assert meta["from"] is None and meta["panel"] is None and meta["reason"] == "x" * 200
+    assert meta["cameras"] == {"camera.front": "kamera_front.jpg"}
+    assert [s["entity_id"] for s in unzip(r2.objects[first + "zustand.json.gz"])["states"]] == [
+        "binary_sensor.study_door"]
+    second = json.loads(r2.objects["snapshots/2026/10/31/20261031T101833.000000Z_request/meta.json"])
+    assert second["reason"] is None
+
+
+async def test_requests_at_the_same_moment_are_both_kept(tmp_path):
+    archive, ha, r2, _, _ = build(tmp_path, camera_pictures=1)
+    ha.state_list = [{"entity_id": PANEL, "state": "armed_home", "attributes": {}, "last_changed": "t"}]
+    when = datetime(2026, 10, 31, 10, 17, 33, tzinfo=UTC)
+    async with running(archive.follow_requests()):
+        for reason in ("Guest opened the study", "Guest opened the cellar", "Guest opened the attic"):
+            await ha.request_events.put(request_event(when, reason))
+        await settle(lambda: len(archive.queue) == 9)
+    metas = sorted((i.key, json.loads(archive.queue.body(i))) for i in archive.queue.items()
+                   if i.key.endswith("meta.json"))
+    assert [k.rsplit("/", 2)[1] for k, _ in metas] == [
+        "20261031T101733.000000Z_request", "20261031T101733.000001Z_request", "20261031T101733.000002Z_request"]
+    assert [m["reason"] for _, m in metas] == [
+        "Guest opened the study", "Guest opened the cellar", "Guest opened the attic"]
+    # The meta file keeps the moment the event was fired
+    assert {m["time"] for _, m in metas} == {when.isoformat()}
+
+
+async def test_ha_loop_follows_requests_without_panel(tmp_path):
+    archive, ha, r2, _, _ = build(tmp_path, alarm_panel="", camera_pictures=1)
+
+    async def connect():
+        pass
+
+    async def config():
+        return {"time_zone": "Europe/Berlin"}
+
+    async def wait_closed():
+        await asyncio.Event().wait()
+
+    async def close():
+        pass
+
+    ha.connect, ha.config, ha.wait_closed, ha.close = connect, config, wait_closed, close
+    task = asyncio.create_task(archive.ha_loop())
+    try:
+        await settle(lambda: archive.ha_connected)
+        await ha.request_events.put(request_event(datetime(2026, 10, 31, 10, 17, 33, tzinfo=UTC)))
+        await settle(lambda: len(archive.queue) == 3)
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task

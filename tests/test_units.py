@@ -136,6 +136,20 @@ def test_snapshot_bodies():
     meta = json.loads(a.meta_body(moment, "alarm_control_panel.z", "armed_night", "triggered", {},
                                   None, {"camera.a": "kamera_a.jpg", "camera.b": None}, False))
     assert meta["cameras"] == {"camera.a": "kamera_a.jpg"} and meta["missing_cameras"] == ["camera.b"]
+    assert meta["reason"] is None
+    folder, _ = a.snapshot_folder(moment, a.REQUEST, BERLIN)
+    assert folder == "snapshots/2026/10/31/20261031T101733.000000Z_request/"
+    meta = json.loads(a.meta_body(moment, None, None, a.REQUEST, {}, None, {}, False,
+                                  reason="Guest opened the study"))
+    assert meta["to"] == "request" and meta["reason"] == "Guest opened the study"
+
+
+def test_request_reason():
+    assert a.request_reason(None) is None
+    assert a.request_reason("   ") is None
+    assert a.request_reason(" Guest\n opened  the study ") == "Guest opened the study"
+    assert a.request_reason(42) == "42"
+    assert a.request_reason("y" * 300) == "y" * 200
 
 
 def test_summary_text():

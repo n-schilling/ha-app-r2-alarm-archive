@@ -2,6 +2,13 @@
 
 All notable changes to this app are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the app uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-11-07
+
+### Added
+
+- Snapshots on request: an automation fires the event `r2_alarm_archive_snapshot`, optionally with `reason` in its data, and the app stores a snapshot with a picture series of all `cameras`, whatever the panel's state and `camera_states`, e.g. when a guest opens a forbidden room while the panel is disarmed. Its folder ends in `_request`, `meta.json` has `to: request`, the panel's state as `from` and the `reason` (up to 200 characters). Works also without `alarm_panel`. Events fired while the app is not connected to Home Assistant are not rebuilt
+- Web page: snapshots on request show as *on request* with their reason in the day's list and on the snapshot's page; they do not count as alarms
+
 ## [0.7.1] - 2026-11-01
 
 ### Changed

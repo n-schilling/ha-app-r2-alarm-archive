@@ -1,11 +1,12 @@
-"""The archive: follows the alarm log and the alarm panel in Home Assistant,
-queues what belongs in the bucket, uploads it past the free tier guard and
-writes the daily summaries.
+"""The archive: follows the alarm log, the alarm panel and snapshot requests
+in Home Assistant, queues what belongs in the bucket, uploads it past the
+free tier guard and writes the daily summaries.
 
 Everything that must reach R2 goes through the queue in /data first, so an
 outage of R2 or of the network loses nothing. The log stream resumes where
 the last queued entry was; panel changes the app missed are rebuilt from
-the recorder.
+the recorder. Snapshot requests fired while the app is not connected are
+not rebuilt: Home Assistant keeps no record the app could read them from.
 """
 
 from __future__ import annotations
@@ -260,6 +261,7 @@ class Archive:
                     tasks.create_task(self.follow_log())
                     if self.cfg.alarm_panel:
                         tasks.create_task(self.follow_panel())
+                    tasks.create_task(self.follow_requests())
                     tasks.create_task(self.ha.wait_closed())
             except* HAError as group:
                 err = group.exceptions[0]
@@ -346,6 +348,20 @@ class Archive:
             self._panel_cursor(moment)
             previous = state
 
+    async def follow_requests(self) -> None:
+        """A snapshot with pictures of all cameras for each event
+        r2_alarm_archive_snapshot, e.g. from an automation while the panel is
+        disarmed. Optional event data: `reason`."""
+        async for event in self.ha.snapshot_requests():
+            data = event.get("data") or {}
+            try:
+                moment = datetime.fromisoformat(event["time_fired"])
+            except (KeyError, TypeError, ValueError):
+                moment = self.now()
+            await self.snapshot(moment, None, a.REQUEST, {}, (event.get("context") or {}).get("user_id"),
+                                reconstructed=False, reason=a.request_reason(
+                                    data.get("reason") if isinstance(data, dict) else None))
+
     async def _entities(self, states: list[dict]) -> list[str]:
         if self.cfg.snapshot_all_entities:
             return sorted(s["entity_id"] for s in states)
@@ -363,12 +379,28 @@ class Archive:
         return found
 
     async def snapshot(self, moment: datetime, old: str | None, new: str, attributes: dict,
-                       user_id: str | None, reconstructed: bool) -> None:
+                       user_id: str | None, reconstructed: bool, reason: str | None = None) -> None:
+        """A snapshot of the panel's change to `new`, or with `new` = request
+        one an automation asked for: then `old` and `attributes` come from the
+        panel as it is, and every camera gives pictures."""
+        requested = new == a.REQUEST
         folder, day = a.snapshot_folder(moment, new, self.tz)
-        if self._done(day, folder + "meta.json"):
+        if requested:
+            # Every request is kept, also two at the same moment: the later one
+            # gets the next free microsecond in its folder name
+            slot = moment
+            while self._done(day, folder + "meta.json"):
+                slot += timedelta(microseconds=1)
+                folder, day = a.snapshot_folder(slot, new, self.tz)
+        elif self._done(day, folder + "meta.json"):
             return
         current = await self.ha.states()
         entities = await self._entities(current)
+        if requested:
+            panel = next((s for s in current if s["entity_id"] == self.cfg.alarm_panel), None) \
+                if self.cfg.alarm_panel else None
+            old = panel.get("state") if panel else None
+            attributes = (panel or {}).get("attributes") or {}
         if reconstructed:
             history = await self.ha.history(entities, iso(moment), iso(moment + timedelta(milliseconds=1)))
             states = []
@@ -387,7 +419,7 @@ class Archive:
                       for s in current if s["entity_id"] in wanted]
         pictures: dict[str, str | None] = {}
         series: dict[str, list[str]] = {}
-        for camera in self.cfg.cameras if new in self.cfg.camera_states else ():
+        for camera in self.cfg.cameras if requested or new in self.cfg.camera_states else ():
             name = a.camera_file(camera)
             if reconstructed:
                 pictures[camera] = None
@@ -406,14 +438,14 @@ class Archive:
                       a.states_body(moment, states, reconstructed), "application/gzip")
         self._enqueue(folder + "meta.json", "snapshots", day,
                       a.meta_body(moment, self.cfg.alarm_panel, old, new, attributes, user_id,
-                                  pictures, reconstructed, series), "application/json")
+                                  pictures, reconstructed, series, reason), "application/json")
         if series:
             # The rest of the series after the meta file: a restart loses only those pictures
             task = asyncio.create_task(self._take_series(folder, day, series))
             self._series.add(task)
             task.add_done_callback(self._series.discard)
-        LOGGER.info("Snapshot %s queued (%d states, %d pictures)", folder, len(states),
-                    sum(1 for p in pictures.values() if p))
+        LOGGER.info("Snapshot %s queued (%d states, %d pictures)%s", folder, len(states),
+                    sum(1 for p in pictures.values() if p), f": {reason}" if reason else "")
 
     async def _take_series(self, folder: str, day: str, series: dict[str, list[str]]) -> None:
         for number in range(1, self.cfg.camera_pictures):

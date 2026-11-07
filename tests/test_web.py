@@ -259,3 +259,54 @@ async def test_series_pictures(client):
     page = await text(c, f"/snapshot/{DAY}/20261031T101733.000000Z_triggered")
     # Picture 3 never arrived: not shown
     assert "kamera_front_2.jpg" in page and "kamera_front_3.jpg" not in page and "camera.front · 2" in page
+
+
+REQUEST = "20261031T121500.000000Z_request"
+
+
+def add_request(archive, r2, reason="Guest opened the study"):
+    folder = f"snapshots/2026/10/31/{REQUEST}"
+    meta = {"time": "2026-10-31T12:15:00+00:00", "panel": "alarm_control_panel.home", "from": "disarmed",
+            "to": "request", "reason": reason, "user_id": None, "cameras": {"camera.front": "kamera_front.jpg"},
+            "missing_cameras": [], "reconstructed": False}
+    for name, body in (("meta.json", json.dumps(meta).encode()),
+                       ("zustand.json.gz", gzip.compress(json.dumps({"states": []}).encode())),
+                       ("kamera_front.jpg", b"\xff\xd8req")):
+        r2.objects[f"{folder}/{name}"] = body
+        archive.state.uploaded(DAY, f"{folder}/{name}")
+
+
+async def test_snapshot_on_request(client):
+    c, archive, r2 = client
+    add_request(archive, r2, "Guest <opened> the study")
+    day = await text(c, f"/day/{DAY}")
+    # Labelled, with the reason, and not marked as an alarm
+    assert ("<div class=''>Auf Anfrage <span class=\"muted\">· Guest &lt;opened&gt; the study</span></div>"
+            in day)
+    page = await text(c, f"/snapshot/{DAY}/{REQUEST}")
+    assert "Unscharf → Auf Anfrage" in page and "<th>Grund</th><td>Guest &lt;opened&gt; the study</td>" in page
+    assert f'src="/file/snapshots/2026/10/31/{REQUEST}/kamera_front.jpg"' in page
+    archive.language = "en"
+    assert "on request" in await text(c, f"/snapshot/{DAY}/{REQUEST}")
+    assert "<th>Reason</th>" in await text(c, f"/snapshot/{DAY}/{REQUEST}")
+
+
+async def test_request_is_no_alarm(client, tmp_path):
+    c, archive, r2 = client
+    add_request(archive, r2)
+    archive.state.data["uploaded"][DAY] = [k for k in archive.state.data["uploaded"][DAY] if "triggered" not in k]
+    web = Web(archive, Cache(tmp_path / "cache2"))
+    assert web.day_counts(DAY)[1:3] == (1, 0)
+    assert "<div class='n'>1</div><div class='n'>–</div>" in await text(c, "/details")
+    assert "Kein Tag mit Alarm." in await text(c, "/details?alarms=1")
+
+
+async def test_request_without_panel_or_reason(client):
+    c, archive, r2 = client
+    add_request(archive, r2, reason=None)
+    meta = json.loads(r2.objects[f"snapshots/2026/10/31/{REQUEST}/meta.json"])
+    meta["from"] = None
+    r2.objects[f"snapshots/2026/10/31/{REQUEST}/meta.json"] = json.dumps(meta).encode()
+    page = await text(c, f"/snapshot/{DAY}/{REQUEST}")
+    assert "– → Auf Anfrage" in page and "Grund" not in page
+    assert "<div class=''>Auf Anfrage</div>" in await text(c, f"/day/{DAY}")

@@ -7,7 +7,7 @@
 ![Supports aarch64](https://img.shields.io/badge/aarch64-yes-green.svg)
 ![Supports amd64](https://img.shields.io/badge/amd64-yes-green.svg)
 
-A Home Assistant app that keeps the alarm log outside the house: it follows the log in the recorder and puts every entry into a Cloudflare R2 bucket, adds a snapshot of states and camera pictures whenever the alarm panel changes, and writes a summary of each day. Objects are created once and never overwritten; an optional free tier guard keeps the whole Cloudflare account 10 % below the limits of R2's free tier. A read-only page of its own in Home Assistant shows the archive, its days, snapshots and pictures, and the free tier in detail, without going to the Cloudflare dashboard.
+A Home Assistant app that keeps the alarm log outside the house: it follows the log in the recorder and puts every entry into a Cloudflare R2 bucket, adds a snapshot of states and camera pictures whenever the alarm panel changes or an automation asks for one, and writes a summary of each day. Objects are created once and never overwritten; an optional free tier guard keeps the whole Cloudflare account 10 % below the limits of R2's free tier. A read-only page of its own in Home Assistant shows the archive, its days, snapshots and pictures, and the free tier in detail, without going to the Cloudflare dashboard.
 
 ## The web page
 
@@ -82,9 +82,32 @@ Set `alarm_panel` to an `alarm_control_panel` entity, and the app saves a snapsh
 
 The lists in the app's options have no entity picker: type the full entity ID, e.g. `camera.front_door`, and choose *Add custom item*.
 
-Without `alarm_panel` the app archives the log only.
+Without `alarm_panel` the app archives the log and the snapshots automations ask for.
 
-### 4. React to the status (recommended)
+### 4. Snapshots on request (optional)
+
+An automation can ask for a snapshot at any time, whatever the panel's state: it fires the event `r2_alarm_archive_snapshot`, with an optional `reason` that the web page shows next to the snapshot. Such a snapshot always gets a picture series of every camera in `cameras`, also when `camera_states` would give none, and it does not count as an alarm. For example, a guest opens the study while the panel is disarmed:
+
+```yaml
+alias: Alarm archive – study opened
+triggers:
+  - trigger: state
+    entity_id: binary_sensor.study_door
+    to: "on"
+conditions:
+  - condition: state
+    entity_id: input_boolean.guests
+    state: "on"
+actions:
+  - event: r2_alarm_archive_snapshot
+    event_data:
+      reason: Guest opened the study
+mode: queued
+```
+
+The app hears the event only while it runs and is connected to Home Assistant; an event fired during a restart is not rebuilt later.
+
+### 5. React to the status (recommended)
 
 The app reports through MQTT discovery whether archiving works. For a dashboard one entity is enough: **Archiving** (`binary_sensor.r2_alarm_archive_archiving`) is on while the log reaches R2 and off when something is wrong; its attribute `problems` says what. The other entities (R2 connection, queue, last upload and summary, free tier usage) show the details.
 
@@ -113,7 +136,7 @@ The entity IDs are those Home Assistant usually gives; check them on the device 
 | Area | Options |
 |---|---|
 | Cloudflare | `account_id`, `bucket`, `jurisdiction` (`default` or `eu`), the R2 key (`access_key_id`, `secret_access_key`), a read-only `api_token` |
-| What is archived | `log_entity`; for snapshots `alarm_panel`, `snapshot_states`, `snapshot_entities` or `snapshot_all_entities`, `cameras`, `camera_states`, `camera_pictures`, `camera_interval` |
+| What is archived | `log_entity`; for snapshots `alarm_panel`, `snapshot_states`, `snapshot_entities` or `snapshot_all_entities`, `cameras`, `camera_states`, `camera_pictures`, `camera_interval`; snapshots on request through the event `r2_alarm_archive_snapshot` |
 | Costs | `free_tier_guard`: keep the whole Cloudflare account 10 % below the limits of R2's free tier (on by default) |
 | Retention | `retention_log`, `retention_snapshots`, `retention_summaries`: days or `unlimited` |
 | Protection | `lock_log`, `lock_snapshots`, `lock_summaries`: bucket lock `off`, `indefinite` or days |

@@ -77,7 +77,7 @@ TEXT = {
         "quarantine": "Quarantine",
         "quarantine_info": "Queue entries the app could not read. They lie in {} (reachable e.g. with Samba or "
                            "an editor app); the problem goes once they are deleted.",
-        "moved": "Set aside", "missing_files": "Missing files",
+        "moved": "Set aside", "missing_files": "Missing files", "reason": "Reason",
     },
     "de": {
         "title": "Alarm-Archiv", "overview": "Übersicht", "details": "Detailansicht", "queue": "Warteschlange",
@@ -115,7 +115,7 @@ TEXT = {
         "quarantine_info": "Einträge der Warteschlange, die die App nicht lesen konnte. Sie liegen in {} "
                            "(erreichbar z. B. über Samba oder eine Editor-App); die Meldung verschwindet, "
                            "sobald sie gelöscht sind.",
-        "moved": "Beiseitegelegt", "missing_files": "Fehlende Dateien",
+        "moved": "Beiseitegelegt", "missing_files": "Fehlende Dateien", "reason": "Grund",
     },
 }
 
@@ -132,11 +132,11 @@ PANEL_STATES = {
     "en": {"disarmed": "disarmed", "armed_home": "armed home", "armed_away": "armed away",
            "armed_night": "armed night", "armed_vacation": "armed vacation",
            "armed_custom_bypass": "armed custom bypass", "arming": "arming", "pending": "pending",
-           "triggered": "ALARM"},
+           "triggered": "ALARM", a.REQUEST: "on request"},
     "de": {"disarmed": "Unscharf", "armed_home": "Zuhause scharf", "armed_away": "Abwesend scharf",
            "armed_night": "Nacht scharf", "armed_vacation": "Urlaub scharf",
            "armed_custom_bypass": "Benutzerdefiniert scharf", "arming": "Wird scharf",
-           "pending": "Eingangsverzögerung", "triggered": "ALARM"},
+           "pending": "Eingangsverzögerung", "triggered": "ALARM", a.REQUEST: "Auf Anfrage"},
 }
 
 # The app's problem texts (see Archive.health) in German
@@ -438,7 +438,16 @@ class Web:
         return local.strftime("%H:%M:%S") if local else "–"
 
     def panel_state(self, state) -> str:
+        if state is None:
+            return "–"
         return PANEL_STATES[self.lang].get(str(state), str(state))
+
+    async def reason(self, folder: str) -> str | None:
+        """The reason of a snapshot an automation asked for, from its meta file."""
+        try:
+            return json.loads(await self.read(folder + "/meta.json")).get("reason") or None
+        except (Blocked, R2Error, ValueError, AttributeError):
+            return None
 
     async def user_name(self, user_id: str | None) -> str:
         """The person of a Home Assistant user, else the ID."""
@@ -700,9 +709,12 @@ class Web:
             name = folder.rsplit("/", 1)[1]
             state = self.folder_state(folder)
             pictures = sum(1 for k in keys if k.startswith(folder + "/") and k.endswith(".jpg"))
+            label = html.escape(self.panel_state(state))
+            if state == a.REQUEST and (reason := await self.reason(folder)):
+                label += f' <span class="muted">· {html.escape(reason)}</span>'
             snaps.append(f'<a class="row" href="{{base}}/snapshot/{day}/{quote(name)}">'
                          f'<div class="nowrap">{self.clock(self.folder_time(folder))}</div>'
-                         f"<div class='{'alarm' if state == 'triggered' else ''}'>{html.escape(self.panel_state(state))}</div>"
+                         f"<div class='{'alarm' if state == 'triggered' else ''}'>{label}</div>"
                          f"<div class='n'>{pictures or '–'}</div>{icon('next', 'next')}</a>")
         snapshots = self.table("snapshots", [(self.t("time"), ""), (self.t("state"), ""), (self.t("pictures"), "n"),
                                              ("", "")], snaps, self.t("none"))
@@ -763,7 +775,9 @@ class Web:
         info = ('<table class="kv">'
                 f"<tr><th>{self.t('from_to')}</th><td>{html.escape(self.panel_state(meta.get('from')))} → "
                 f"{html.escape(self.panel_state(meta.get('to')))}</td></tr>"
-                f"<tr><th>{self.t('user')}</th><td>{html.escape(await self.user_name(meta.get('user_id')))}</td></tr>"
+                + (f"<tr><th>{self.t('reason')}</th><td>{html.escape(str(meta['reason']))}</td></tr>"
+                   if meta.get("reason") else "")
+                + f"<tr><th>{self.t('user')}</th><td>{html.escape(await self.user_name(meta.get('user_id')))}</td></tr>"
                 + (f"<tr><th>{self.t('missing')}</th><td>{html.escape(', '.join(missing))}</td></tr>" if missing else "")
                 + (f"<tr><th>{self.t('reconstructed')}</th><td>✓</td></tr>" if meta.get("reconstructed") else "")
                 + f"<tr><th>{self.t('files')}</th><td>{downloads}</td></tr></table>")

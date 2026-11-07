@@ -16,6 +16,9 @@ from zoneinfo import ZoneInfo
 # Prefix per kind of data
 PREFIX = {"log": "protokoll/", "snapshots": "snapshots/", "summaries": "zusammenfassung/"}
 DAY_SECONDS = 86400
+# Folder state of a snapshot an automation asked for, and the longest reason kept
+REQUEST = "request"
+REASON_MAX = 200
 
 
 def utc(ts: float) -> datetime:
@@ -71,6 +74,14 @@ def snapshot_folder(moment: datetime, state: str, tz: ZoneInfo) -> tuple[str, st
     return f"{PREFIX['snapshots']}{day_folder(day)}{stamp(moment)}_{state}/", day
 
 
+def request_reason(raw: object) -> str | None:
+    """The reason of a snapshot request: text, trimmed, at most REASON_MAX characters."""
+    if raw is None:
+        return None
+    text = " ".join(str(raw).split())[:REASON_MAX].strip()
+    return text or None
+
+
 def camera_file(entity_id: str, number: int = 1) -> str:
     """The picture of a camera; further pictures of a series get _2, _3, ..."""
     suffix = "" if number == 1 else f"_{number}"
@@ -108,11 +119,12 @@ def states_body(moment: datetime, states: list[dict], reconstructed: bool) -> by
 
 def meta_body(moment: datetime, panel: str, old: str | None, new: str, attributes: dict,
               user_id: str | None, cameras: dict[str, str | None], reconstructed: bool,
-              series: dict[str, list[str]] | None = None) -> bytes:
+              series: dict[str, list[str]] | None = None, reason: str | None = None) -> bytes:
     """`cameras`: entity -> file name, or None when its picture is missing;
-    `series`: entity -> all file names of its picture series, the first included."""
+    `series`: entity -> all file names of its picture series, the first included;
+    `reason`: what an automation gave when it asked for the snapshot."""
     data = {"time": moment.astimezone(UTC).isoformat(), "panel": panel, "from": old, "to": new,
-            "attributes": attributes, "user_id": user_id, "reconstructed": reconstructed,
+            "reason": reason, "attributes": attributes, "user_id": user_id, "reconstructed": reconstructed,
             "cameras": {cam: name for cam, name in cameras.items() if name},
             "missing_cameras": [cam for cam, name in cameras.items() if not name]}
     if series:

@@ -60,6 +60,12 @@ class FakeCore:
                     {"id": msg_id, "type": "event", "event": {"events": [{"message": "alt", "when": 1.0}]}},
                     {"id": msg_id, "type": "event", "event": {"events": [{"message": "neu", "when": 2.0}]}},
                 ])
+            elif kind == "subscribe_events":
+                assert data["event_type"] == "r2_alarm_archive_snapshot"
+                await ws.send_json({"id": msg_id, "type": "result", "success": True, "result": None})
+                await ws.send_json({"id": msg_id, "type": "event", "event": {
+                    "event_type": "r2_alarm_archive_snapshot", "data": {"reason": "Guest opened the study"},
+                    "time_fired": "2026-10-31T10:17:33.250000+00:00", "context": {"user_id": None}}})
             elif kind == "history/history_during_period":
                 await ws.send_json({"id": msg_id, "type": "result", "success": True,
                                     "result": {e: [{"s": "on", "lu": 1.0}] for e in data["entity_ids"]}})
@@ -89,6 +95,8 @@ async def test_websocket(core):
         if len(events) == 2:
             break
     assert events == ["alt", "neu"]
+    request = await anext(ha.snapshot_requests())
+    assert request["data"] == {"reason": "Guest opened the study"}
     with pytest.raises(HAError, match="Unknown command"):
         await ha.call({"type": "nope"})
     assert await ha.camera("camera.front") == b"jpeg"

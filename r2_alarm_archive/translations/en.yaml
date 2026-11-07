@@ -39,7 +39,7 @@ configuration:
     description: Camera entities whose pictures go into the snapshots. Type the full entity ID, e.g. camera.front_door, and choose Add custom item.
   camera_states:
     name: Camera states
-    description: Panel states whose snapshots also get camera pictures; each must be a snapshot state. A picture is about 0.6 MB.
+    description: Panel states whose snapshots also get camera pictures; each must be a snapshot state. Snapshots on request always get them. A picture is about 0.6 MB.
   camera_pictures:
     name: Pictures per camera
     description: "With 2 or more, the app takes a series: the first picture at once, the others at this interval. Each picture is about 0.6 MB."

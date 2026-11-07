@@ -1,6 +1,6 @@
 # R2 Alarm Archive
 
-Keeps the alarm log of Home Assistant outside the house: every log entry goes to a Cloudflare R2 bucket as soon as it is written, together with a snapshot of the states and camera pictures whenever the alarm panel changes, and a summary of each day. If the Home Assistant machine is stolen or destroyed, the log is still there.
+Keeps the alarm log of Home Assistant outside the house: every log entry goes to a Cloudflare R2 bucket as soon as it is written, together with a snapshot of the states and camera pictures whenever the alarm panel changes or an automation asks for one, and a summary of each day. If the Home Assistant machine is stolen or destroyed, the log is still there.
 
 The app reads the log from Home Assistant's recorder and resumes where it stopped, so a restart, an update or an outage loses nothing the recorder still has. Everything waits in a queue on the machine until R2 has confirmed it. Objects are created once and never overwritten; with a bucket lock not even the app's key can delete them.
 
@@ -13,6 +13,16 @@ The app reads the log from Home Assistant's recorder and resumes where it stoppe
   - `meta.json`: from and to state, the panel's attributes, the user, which pictures are missing and which files the series has.
 
   Was the app not running at the time, it rebuilds the states from the recorder at its next start, marks the snapshot as `reconstructed` and lists the pictures as missing. Snapshots start with the app's first start.
+- **Snapshots on request.** An automation can ask for a snapshot without the panel changing, e.g. when a guest opens a forbidden room while the panel is disarmed. It fires the event `r2_alarm_archive_snapshot`, optionally with a `reason` (text, up to 200 characters are kept):
+
+  ```yaml
+  actions:
+    - event: r2_alarm_archive_snapshot
+      event_data:
+        reason: Guest opened the study
+  ```
+
+  Each event gives one snapshot in `snapshots/YYYY/MM/DD/<UTC time>_request/`, at the moment the event was fired: the same `zustand.json.gz` as above, a picture series of every camera in `cameras` (`camera_pictures`, `camera_interval`; `camera_states` does not apply), and a `meta.json` with the panel's current state as `from`, `request` as `to` and the `reason`. Two events at the same moment give two snapshots; the second folder's time is one microsecond later. It works also without `alarm_panel`; the states are then those of `snapshot_entities`. The app hears the event only while it is connected to Home Assistant: an event fired while the app is stopped or Home Assistant restarts is lost, and nothing rebuilds it.
 - **Daily summary.** At 00:05 local time (Home Assistant's time zone) the app writes `zusammenfassung/YYYY/MM/YYYY-MM-DD.txt`: one line per entry of the day before, its snapshots, and the SHA-256 of every entry. It is built from what is in R2, so it shows what really arrived. It waits until nothing of that day is in the queue. Entries that reach R2 after the summary go into `…-nachtrag-1.txt`, `-2` and so on.
 - **Folders** follow the local date, times inside the objects are UTC.
 - **A new install.** The app keeps an index of what is in the bucket in `/data`. When that index is empty, e.g. after a new Home Assistant installation, the app first lists the bucket once (a few Class A operations) and fills the index from it. The web page then shows the whole archive again, and the app writes no summary twice.
@@ -23,7 +33,7 @@ The app reads the log from Home Assistant's recorder and resumes where it stoppe
 The app adds a page **Alarm Archive** to Home Assistant's sidebar (for administrators only). It reads, it never changes anything, and it reaches the browser only through Home Assistant, so no port is opened. It looks like Home Assistant's settings, takes over the theme in use (colors, dark mode, cards) and follows Home Assistant's language (German or English). It opens with a menu:
 
 - **Overview:** whether archiving works and why not, the R2 connection, the queue, last upload and summary; the free tier with absolute figures for the whole account and this bucket, the guard's limits, a projection to the end of the month, the storage growth per day and when the guard's limit would be reached; the bucket rules, with the Wrangler commands when they differ.
-- **Details:** the archived days as a table grouped by month (the newest month open), with entries, snapshots, alarms and summaries per day and month; a filter shows only days with an alarm (a snapshot of `triggered`). A day shows its log lines, its snapshots and its summary files; a snapshot shows the change, the user, the camera pictures and the states.
+- **Details:** the archived days as a table grouped by month (the newest month open), with entries, snapshots, alarms and summaries per day and month; a filter shows only days with an alarm (a snapshot of `triggered`; snapshots on request are no alarm). A day shows its log lines, its snapshots and its summary files, a snapshot on request as *on request* with its reason; a snapshot shows the change, the reason of a request, the user, the camera pictures and the states.
 - **Queue:** what waits on the machine, and since when; and what lies in the quarantine.
 - **Settings:** opens the app's options in Home Assistant.
 
@@ -80,8 +90,8 @@ The list options (`snapshot_entities`, `cameras`) have no entity picker in the a
 | `snapshot_states` | all armed states, `triggered`, `disarmed` | Panel states with a snapshot |
 | `snapshot_entities` | | Entities in each snapshot; groups count with their members |
 | `snapshot_all_entities` | `false` | All entities in each snapshot instead |
-| `cameras` | | Camera entities, one picture each per snapshot |
-| `camera_states` | `triggered` | Panel states whose snapshots also get pictures; each must be in `snapshot_states` |
+| `cameras` | | Camera entities whose pictures go into snapshots |
+| `camera_states` | `triggered` | Panel states whose snapshots also get pictures; each must be in `snapshot_states`. Snapshots on request always get them |
 | `camera_pictures` | `3` | Pictures per camera and snapshot, 1 to 10; from 2 a series |
 | `camera_interval` | `10` | Seconds between the pictures of a series, 1 to 60 |
 | `r2_check_interval` | `15` | Minutes between checks of the R2 connection, 1 to 1440; one Class B operation each |
@@ -117,3 +127,4 @@ For a dashboard, *Archiving* is enough, e.g. as a tile card. A useful automation
 - **Uploads fail with HTTP 403**: the R2 access key is wrong or not allowed on this bucket.
 - **Queue grows, R2 connection on, Free tier limit reached on**: the account is at 90 % of the free tier; see the attributes of *Free tier usage*.
 - **No snapshots**: `alarm_panel` empty, or the state is not in `snapshot_states`.
+- **No snapshot on request**: the event type must be exactly `r2_alarm_archive_snapshot`; the app must be running and connected to Home Assistant when the event is fired.

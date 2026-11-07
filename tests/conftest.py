@@ -78,7 +78,7 @@ class FakeR2:
 
 
 class FakeHA:
-    """Stands in for Home Assistant: states, history, cameras and two
+    """Stands in for Home Assistant: states, history, cameras and three
     subscriptions fed from queues."""
 
     def __init__(self):
@@ -89,6 +89,7 @@ class FakeHA:
         self.pictures: dict[str, bytes] = {"camera.front": b"\xff\xd8jpeg"}
         self.log_events: asyncio.Queue = asyncio.Queue()
         self.panel_events: asyncio.Queue = asyncio.Queue()
+        self.request_events: asyncio.Queue = asyncio.Queue()
         self.log_start: str | None = None
 
     async def states(self):
@@ -116,6 +117,10 @@ class FakeHA:
     async def panel_changes(self, entity_id):
         while True:
             yield await self.panel_events.get()
+
+    async def snapshot_requests(self):
+        while True:
+            yield await self.request_events.get()
 
 
 SMALL_USAGE = Usage(10, 100, 1000)
