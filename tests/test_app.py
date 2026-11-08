@@ -198,6 +198,24 @@ async def test_missed_snapshot_is_rebuilt(tmp_path):
     assert archive.state.data["panel_cursor"] == armed.isoformat()
 
 
+async def test_catch_up_starts_after_the_cursor(tmp_path):
+    """After a restart Home Assistant writes a row with the panel's unchanged
+    state. Read from just after the cursor, the state at the start is the change
+    already archived, so neither that row nor its own is rebuilt."""
+    archive, ha, r2, _, _ = build(tmp_path)
+    disarmed = datetime(2026, 10, 30, 21, 0, 0, 123456, tzinfo=UTC)
+    archive.state.data["panel_cursor"] = disarmed.isoformat()
+    restart = datetime(2026, 10, 31, 7, 12, 34, 567890, tzinfo=UTC)
+    ha.history_data = {PANEL: [{"s": "disarmed", "lu": disarmed.timestamp()},
+                               {"s": "disarmed", "a": {}, "lu": restart.timestamp()}]}
+    async with running(archive.follow_panel(), archive.upload_loop()):
+        await settle(lambda: len(ha.history_calls) == 1)
+        await asyncio.sleep(0.05)
+    assert ha.history_calls[0][1] == (disarmed + timedelta(microseconds=1)).isoformat()
+    assert r2.objects == {} and len(archive.queue) == 0
+    assert archive.state.data["panel_cursor"] == disarmed.isoformat()
+
+
 async def test_daily_summary_and_supplement(tmp_path):
     archive, ha, r2, _, clock = build(tmp_path)
     archive.state.data["installed"] = "2026-10-30"

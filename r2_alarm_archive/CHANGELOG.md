@@ -2,6 +2,12 @@
 
 All notable changes to this app are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the app uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] - 2026-11-08
+
+### Fixed
+
+- After a restart of Home Assistant the catch-up no longer rebuilds a snapshot for the row Home Assistant writes for the panel's unchanged state when it starts: the history is read from just after the last change, so the state at the start is the one already archived. Read from the change itself, Home Assistant could answer with the state before it, and a restart made a snapshot of a change that never happened
+
 ## [0.8.0] - 2026-11-07
 
 ### Added

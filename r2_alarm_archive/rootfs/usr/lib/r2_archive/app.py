@@ -333,8 +333,13 @@ class Archive:
 
     async def catch_up_panel(self) -> None:
         panel = self.cfg.alarm_panel
-        start = self.state.data["panel_cursor"]
-        records = (await self.ha.history([panel], start)).get(panel) or []
+        # From just after the cursor: the state at that moment is the change the
+        # cursor points to, which is handled. Asked from the cursor itself, Home
+        # Assistant may answer with the state before that change instead, and the
+        # row of the change, or the row it writes for the panel's unchanged state
+        # when it starts, would pass as a change
+        start = datetime.fromisoformat(self.state.data["panel_cursor"]) + timedelta(microseconds=1)
+        records = (await self.ha.history([panel], iso(start))).get(panel) or []
         previous = records[0].get("s") if records else None
         for record in records[1:]:
             state = record.get("s")
