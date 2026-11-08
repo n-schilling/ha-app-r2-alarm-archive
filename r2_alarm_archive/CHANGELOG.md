@@ -2,6 +2,12 @@
 
 All notable changes to this app are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the app uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-11-08
+
+### Changed
+
+- First public release after a week in use: the app as in 0.8.1
+
 ## [0.8.1] - 2026-11-08
 
 ### Fixed
