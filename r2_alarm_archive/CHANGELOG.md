@@ -2,6 +2,35 @@
 
 All notable changes to this app are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the app uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-11-10
+
+### Added
+
+- The web page shows the app and its version at the bottom of every page
+- The bucket rules on the overview say when no bucket lock is set: the app's access key can then delete what is archived
+- `scripts/check.sh` runs the CI checks locally; `scripts/screenshots.py` makes the screenshots with made-up data
+
+### Changed
+
+- The web page uses the stylesheet shared by these apps, with Home Assistant 2026.11's look: colors, cards, top bar, alerts
+- Requires Home Assistant 2026.11 or later; the base image is pinned (`base-python:3.14-alpine3.24-2026.11.0`) and Dependabot proposes new ones
+- Snapshots no longer keep access tokens (`access_token`, `entity_picture`) in the attributes of the states and the panel
+- The camera pictures of a snapshot are taken at the same time; a series keeps its interval however long a picture takes
+- A ZIP export is built in a temporary file and streamed, reads R2 a few objects at a time and does not empty the page's cache; it needs the free tier guard's room for all its reads up front
+- The free tier guard keeps counting its own operations until Cloudflare's analytics show them (10 minutes), instead of forgetting them at every poll
+- The state file is written once per batch of uploads instead of after each one
+- Without an MQTT broker the app archives anyway and asks the Supervisor for a broker until there is one
+- The device's link opens the app's page in Settings → Apps; the panel trigger uses the `trigger` key
+
+### Fixed
+
+- Security: object keys read back from the bucket (when the index is rebuilt) are taken only in the app's own form, so a key with HTML in it can no longer run a script on the web page, and a ZIP export can no longer contain paths that climb out of its folder. Every value on the page is encoded for where it lands, and a Content-Security-Policy lets only the page's own script run
+- A connection to Home Assistant that breaks while a message is sent no longer stops the app; an unexpected fault while following Home Assistant is logged and the app connects again
+- A refused R2 key (or a deleted bucket) shows at the next connection check in *Archiving*, not only at the next upload
+- A queued object whose body file is missing goes to the quarantine instead of stopping the app at every start
+- An unreadable answer to a list request is retried instead of stopping the app
+- The daily summary counts one Class A operation per page of 1000 keys
+
 ## [1.0.0] - 2026-11-08
 
 ### Changed
