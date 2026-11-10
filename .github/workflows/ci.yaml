@@ -1,9 +1,13 @@
 name: CI
+# scripts/check.sh runs the same checks locally; keep the two in step.
 
 on:
   push:
     branches: [main, dev]
   pull_request:
+  schedule:
+    # Weekly, so a new base image, Home Assistant or linter release that breaks the app shows up
+    - cron: "23 4 * * 1"
   workflow_dispatch:
 
 permissions:
@@ -28,6 +32,7 @@ jobs:
           shellcheck --shell=bash --severity=warning
           r2_alarm_archive/rootfs/etc/s6-overlay/s6-rc.d/archive/run
           r2_alarm_archive/rootfs/etc/s6-overlay/s6-rc.d/archive/finish
+          scripts/check.sh
 
   unit:
     name: Unit tests
@@ -41,9 +46,9 @@ jobs:
         with:
           python-version: "3.14"
       - name: Install
-        run: pip install -r r2_alarm_archive/requirements.txt pytest==9.1.1 pytest-aiohttp==1.1.1 ruff==0.17.3
+        run: pip install -r r2_alarm_archive/requirements.txt -r requirements_test.txt
       - name: Ruff
-        run: ruff check r2_alarm_archive/rootfs/usr/lib/r2_archive tests
+        run: ruff check r2_alarm_archive/rootfs/usr/lib/r2_archive tests scripts
       - name: Test
         run: pytest -v
 

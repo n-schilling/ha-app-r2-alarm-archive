@@ -14,3 +14,14 @@ updates:
     groups:
       python:
         patterns: ["*"]
+  - package-ecosystem: docker
+    directory: /r2_alarm_archive
+    schedule:
+      interval: weekly
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      test:
+        patterns: ["*"]

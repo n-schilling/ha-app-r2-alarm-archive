@@ -1,6 +1,5 @@
-ARG BUILD_FROM=ghcr.io/home-assistant/base-python:3.14-alpine3.24
-# hadolint ignore=DL3006
-FROM ${BUILD_FROM}
+# A fixed tag, so every build starts from the same image; Dependabot proposes new ones
+FROM ghcr.io/home-assistant/base-python:3.14-alpine3.24-2026.11.0
 
 SHELL ["/bin/ash", "-o", "pipefail", "-c"]
 
@@ -12,7 +11,7 @@ COPY rootfs /
 RUN python3 -m compileall -q /usr/lib/r2_archive
 
 ARG BUILD_ARCH BUILD_DATE BUILD_DESCRIPTION BUILD_NAME BUILD_REF BUILD_REPOSITORY BUILD_VERSION
-# For the origin of the MQTT discovery
+# The version from config.yaml: for the MQTT discovery and the bottom of the web page
 ENV APP_VERSION=${BUILD_VERSION}
 # s6-overlay: warnings and errors only, no per-service start/stop info lines
 ENV S6_VERBOSITY=1
