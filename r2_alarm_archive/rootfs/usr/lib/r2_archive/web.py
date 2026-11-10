@@ -186,108 +186,58 @@ def icon(name: str, cls: str = "") -> str:
     return f'<svg class="{cls}" viewBox="0 0 24 24" aria-hidden="true"><path d="{ICONS[name]}"/></svg>'
 
 
-# Home Assistant's defaults; the script replaces them with the theme in use
+# The look of Home Assistant, the same file in every app of this kind (see its
+# header); the script below replaces its colors with the theme in use
+HA_CSS = (Path(__file__).resolve().parents[2] / "local/share/ha-app/ha.css").read_text()
+# What only this page needs, after ha.css
 STYLE = """
-:root { color-scheme: light dark; --primary-background-color: #fafafa; --secondary-background-color: #e5e5e5;
-  --card-background-color: #fff; --primary-text-color: #212121; --secondary-text-color: #727272;
-  --divider-color: rgba(0,0,0,.12); --primary-color: #03a9f4; --success-color: #4caf50;
-  --warning-color: #ff9800; --error-color: #db4437; --sidebar-background-color: #fff;
-  --sidebar-text-color: #212121; --sidebar-icon-color: rgba(0,0,0,.5);
-  --app-header-border-bottom: 1px solid var(--divider-color); --ha-card-border-radius: 12px;
-  --ha-card-border-width: 1px; --ha-card-border-color: var(--divider-color); --ha-card-box-shadow: none;
-  --ha-font-family-body: Roboto, Noto, sans-serif; --data-table-background-color: var(--card-background-color);
-  --header-height: 56px; }
-@media (prefers-color-scheme: dark) { :root { --primary-background-color: #111; --secondary-background-color: #282828;
-  --card-background-color: #1c1c1c; --primary-text-color: #e1e1e1; --secondary-text-color: #9b9b9b;
-  --divider-color: rgba(225,225,225,.12); --sidebar-background-color: #1c1c1c; --sidebar-text-color: #e1e1e1;
-  --sidebar-icon-color: rgba(255,255,255,.5); } }
-* { box-sizing: border-box; }
-html, body { margin: 0; background: var(--primary-background-color); color: var(--primary-text-color);
-  font: 14px/1.6 var(--ha-font-family-body); -webkit-font-smoothing: antialiased; }
-a { color: var(--primary-color); text-decoration: none; }
-svg { width: 24px; height: 24px; fill: currentColor; flex: none; }
-header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; height: var(--header-height);
-  padding: 0 12px; background: var(--sidebar-background-color); color: var(--sidebar-text-color);
-  border-bottom: var(--app-header-border-bottom); }
-header .back { display: flex; align-items: center; justify-content: center; width: 48px; height: 48px;
-  border-radius: 50%; color: var(--sidebar-icon-color); }
-header .back:hover, .item:hover, a.row:hover { background: color-mix(in srgb, var(--primary-text-color) 6%, transparent); }
-header h1 { margin: 0 0 0 12px; font-size: 20px; font-weight: 400; line-height: 32px; white-space: nowrap;
-  overflow: hidden; text-overflow: ellipsis; }
-header .back + h1 { margin-left: 24px; }
-main { margin: 0 auto; padding: 16px; max-width: 1040px; }
+header > .back { margin: 0 8px 0 -12px; }
 main.narrow { max-width: 632px; }
 main.wide { max-width: none; padding: 0; }
-.card { background: var(--card-background-color); border-radius: var(--ha-card-border-radius);
-  border: var(--ha-card-border-width) solid var(--ha-card-border-color); box-shadow: var(--ha-card-box-shadow);
-  margin-bottom: 16px; overflow: hidden; }
-.card h2 { margin: 0; padding: 24px 16px 16px; font-size: 24px; font-weight: 400; line-height: 32px; }
-.card .content { padding: 0 16px 16px; }
 .item { display: flex; align-items: center; gap: 16px; min-height: 66px; padding: 12px 16px;
   color: var(--primary-text-color); }
+.item:hover, a.row:hover { background: var(--ha-hover); }
 .icon-bg { display: flex; padding: 8px; border-radius: 50%; color: #fff; }
 .text { display: flex; flex: 1; flex-direction: column; min-width: 0; }
 .headline { line-height: 20px; }
-.supporting { font-size: 12px; line-height: 16px; color: var(--secondary-text-color); margin-top: 2px; }
+.supporting { font-size: var(--ha-font-size-s); line-height: 16px; color: var(--secondary-text-color); margin-top: 2px; }
 .next { color: var(--secondary-text-color); }
-.badge { min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; font-size: 12px; font-weight: 500;
-  line-height: 20px; text-align: center; color: #fff; background: var(--primary-color); }
+.badge { min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; font-size: var(--ha-font-size-s);
+  font-weight: var(--ha-font-weight-medium); line-height: 20px; text-align: center; color: var(--text-primary-color);
+  background: var(--primary-color); }
 .badge.warn { background: var(--warning-color); }
-.state { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-weight: 500; }
-.ok { color: var(--success-color); } .bad { color: var(--warning-color); } .muted { color: var(--secondary-text-color); }
 ul.problems { margin: 0 0 12px; padding-left: 32px; }
-table { border-collapse: collapse; width: 100%; }
-th, td { text-align: left; padding: 8px 16px 8px 0; vertical-align: top; }
-td { border-top: 1px solid var(--divider-color); }
-th { font-weight: 500; font-size: 12px; color: var(--primary-text-color); }
-table.kv th { width: 40%; font-size: 14px; font-weight: 400; color: var(--secondary-text-color);
-  border-top: 1px solid var(--divider-color); }
-table.kv tr:first-child th, table.kv tr:first-child td { border-top: 0; }
-.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.scroll { overflow-x: auto; }
-.nowrap { white-space: nowrap; }
-pre { margin: 8px 0 0; padding: 12px; overflow-x: auto; border-radius: 8px; font-size: 12px;
+pre { margin: 8px 0 0; padding: 12px; overflow-x: auto; border-radius: 8px; font-size: var(--ha-font-size-s);
   background: var(--secondary-background-color); }
-.table { background: var(--data-table-background-color); font-size: 12.25px; }
-.card .table { background: none; }
+.table { font-size: 13px; }
 .row { display: grid; grid-template-columns: var(--cols); column-gap: 16px; align-items: center;
-  min-height: 52px; padding: 0 16px; color: var(--primary-text-color); }
+  min-height: 52px; padding: 0 16px; color: var(--primary-text-color); border-top: 1px solid var(--divider-color); }
 .row > * { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.thead { min-height: 56px; font-size: 12px; font-weight: 500; border-bottom: 1px solid var(--divider-color); }
+.thead { min-height: 56px; font-size: var(--ha-font-size-s); font-weight: var(--ha-font-weight-medium);
+  border-top: 0; border-bottom: 1px solid var(--divider-color); }
 .thead > * { white-space: nowrap; }
+.thead + .row { border-top: 0; }
 .row.empty { color: var(--secondary-text-color); }
-summary.row { list-style: none; cursor: pointer; padding-left: 12px; font-weight: 500;
+summary.row { list-style: none; cursor: pointer; padding-left: 12px; font-weight: var(--ha-font-weight-medium);
   background: var(--secondary-background-color); }
 details > summary::-webkit-details-marker { display: none; }
 summary .group { display: flex; align-items: center; gap: 12px; white-space: nowrap; }
 details:not([open]) .open { transform: rotate(180deg); }
+summary a.next:hover { color: var(--primary-color); }
 .cols-details { --cols: minmax(0, 2fr) repeat(4, minmax(0, 1fr)) 24px; }
 .cols-snapshots { --cols: minmax(0, 2fr) minmax(0, 2fr) minmax(0, 1fr) 24px; }
 .cols-log { --cols: 140px minmax(0, 1fr); }
 .cols-files { --cols: minmax(0, 1fr) 24px; }
 .cols-queue { --cols: minmax(0, 3fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 2fr); }
-.alarm { color: var(--error-color); font-weight: 500; }
-.button { display: inline-flex; align-items: center; gap: 8px; height: 36px; padding: 0 12px; border-radius: 18px;
-  font-weight: 500; color: var(--primary-color); }
-.button:hover { background: color-mix(in srgb, var(--primary-color) 10%, transparent); }
+.alarm { color: var(--error-color); font-weight: var(--ha-font-weight-medium); }
 .button svg { width: 18px; height: 18px; }
 .pics { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr)); gap: 16px; }
 .pics figure { margin: 0; } .pics img { display: block; width: 100%; border-radius: 12px; }
 .pics figcaption { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-header .actions { margin-left: auto; display: flex; }
-.toolbar { display: flex; align-items: center; gap: 8px; min-height: 56px; padding: 0 16px;
-  border-bottom: 1px solid var(--divider-color); background: var(--primary-background-color); }
-.chip { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: 8px;
-  border: 1px solid var(--divider-color); color: var(--primary-text-color); font-size: 13px; font-weight: 500; }
+main.wide .toolbar { min-height: 56px; padding: 8px 16px; border-bottom: 1px solid var(--divider-color); }
+main.wide .alert { margin: 16px; }
 .chip svg { width: 18px; height: 18px; }
-.chip.on { background: color-mix(in srgb, var(--primary-color) 15%, transparent); border-color: transparent; }
-.chip:hover { background: color-mix(in srgb, var(--primary-text-color) 6%, transparent); }
-summary a.next:hover { color: var(--primary-color); }
-.about { padding: 16px; text-align: center; color: var(--secondary-text-color); font-size: 12px; }
-.notice { padding: 12px 16px; margin-bottom: 16px; border-radius: var(--ha-card-border-radius);
-  background: color-mix(in srgb, var(--warning-color) 15%, transparent); }
 @media (max-width: 600px) {
-  .opt { display: none; }
   .cols-details { --cols: minmax(0, 5fr) repeat(3, minmax(0, 3fr)) 24px; }
   .cols-log { --cols: 64px minmax(0, 1fr); }
   .cols-queue { --cols: minmax(0, 3fr) minmax(0, 1fr) minmax(0, 2fr); }
@@ -297,11 +247,11 @@ summary a.next:hover { color: var(--primary-color); }
 # Takes Home Assistant's theme from the page around the ingress frame (same
 # origin), and follows it when the theme or dark mode changes
 THEME_VARS = ("primary-background-color", "secondary-background-color", "card-background-color",
-              "primary-text-color", "secondary-text-color", "divider-color", "primary-color", "success-color",
-              "warning-color", "error-color", "sidebar-background-color", "sidebar-text-color",
+              "primary-text-color", "secondary-text-color", "disabled-text-color", "divider-color",
+              "primary-color", "text-primary-color", "success-color", "warning-color", "error-color",
+              "info-color", "sidebar-background-color", "sidebar-text-color",
               "sidebar-icon-color", "app-header-border-bottom", "ha-card-border-radius", "ha-card-border-width",
-              "ha-card-border-color", "ha-card-box-shadow", "ha-font-family-body",
-              "data-table-background-color", "header-height")
+              "ha-card-border-color", "ha-card-box-shadow", "ha-font-family-body", "header-height")
 SCRIPT = """(() => { try {
   const outer = window.parent.document.documentElement;
   if (outer === document.documentElement) return;
@@ -532,19 +482,25 @@ class Web:
              width: str = "", actions: str = "") -> web.Response:
         base = html.escape(request.headers.get("X-Ingress-Path", ""), quote=True)
         body = body.replace("{base}", base)
-        back_link = (f'<a class="back" href="{base}{back}" title="{self.t("back")}">{icon("back")}</a>'
+        back_link = (f'<a class="icon-button back" href="{base}{back}" title="{self.t("back")}">{icon("back")}</a>'
                      if back is not None else "")
         return web.Response(content_type="text/html", charset="utf-8", text=(
             f'<!doctype html><html lang="{self.lang}"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width, initial-scale=1">'
-            f"<title>{html.escape(title)}</title><style>{STYLE}</style><script>{SCRIPT}</script></head><body>"
+            f"<title>{html.escape(title)}</title><style>{HA_CSS}</style><style>{STYLE}</style>"
+            f"<script>{SCRIPT}</script></head><body>"
             f"<header>{back_link}<h1>{html.escape(title)}</h1>"
             f'<div class="actions">{actions.replace("{base}", base)}</div></header>'
-            f'<main class="{width}">{body}{self.about()}</main></body></html>'))
+            f'<main class="{width}">{body}</main>{self.about()}</body></html>'))
 
     def about(self) -> str:
         """The app and its version, at the bottom of every page."""
-        return f'<div class="about">{html.escape(f"R2 Alarm Archive {self.version}".strip())}</div>'
+        return f'<footer class="version">{html.escape(f"R2 Alarm Archive {self.version}".strip())}</footer>'
+
+    @staticmethod
+    def alert(text: str) -> str:
+        """A warning like ha-alert."""
+        return f'<div class="alert warning">{icon("alert")}<div>{html.escape(text)}</div></div>'
 
     def card(self, title: str | None, content: str, padded: bool = True) -> str:
         head = f"<h2>{html.escape(title)}</h2>" if title else ""
@@ -788,10 +744,10 @@ class Web:
             rows.append(f'<a class="row" href="{{base}}/file/{key}?download=1" title="{self.t("download")}">'
                         f'<div>{html.escape(key.rsplit("/", 1)[1])}</div>{icon("download", "next")}</a>')
         summaries = self.table("files", [(self.t("file"), ""), ("", "")], rows, self.t("none"))
-        note = f'<div class="notice">{self.t("cached_only")}</div>' if blocked else ""
+        note = self.alert(self.t("cached_only")) if blocked else ""
         body = (note + self.card(self.t("log"), log, padded=False) + self.card(self.t("snapshots"), snapshots, padded=False)
                 + self.card(self.t("summary"), summaries, padded=False))
-        export = (f'<a class="back" href="{{base}}/export/{day}.zip" title="{self.t("export_day")}">'
+        export = (f'<a class="icon-button" href="{{base}}/export/{day}.zip" title="{self.t("export_day")}">'
                   f'{icon("zip")}</a>')
         return self.page(request, self.day_text(day, weekday=True), body, back=f"/details?month={day[:7]}",
                          actions=export)
@@ -821,7 +777,7 @@ class Web:
             states = json.loads(gzip.decompress(await self.read(folder + "/zustand.json.gz")))
         except Blocked:
             return self.page(request, self.when(self.folder_time(folder)),
-                             f'<div class="notice">{self.t("cached_only")}</div>', back=back)
+                             self.alert(self.t("cached_only")), back=back)
         rows = "".join(
             f"<tr><td>{html.escape(str((s.get('attributes') or {}).get('friendly_name') or s['entity_id']))}"
             f"<br><span class='muted'>{html.escape(s['entity_id'])}</span></td>"
@@ -870,7 +826,7 @@ class Web:
                     f'<div class="n">{size_text(q.size, self.lang)}</div>'
                     f"<div>{self.when(datetime.fromtimestamp(q.moved, UTC))}</div></div>" for q in kept]
             table += (f'<div class="toolbar"><strong>{self.t("quarantine")}</strong></div>'
-                      f'<div class="notice" style="margin:16px">{html.escape(self.t("quarantine_info").format(where))}</div>'
+                      + self.alert(self.t("quarantine_info").format(where))
                       + self.table("queue", [(self.t("file"), ""), ("", "opt"), (self.t("size"), "n"),
                                              (self.t("moved"), "")], rows, ""))
         return self.page(request, self.t("queue"), table, back="/", width="wide")

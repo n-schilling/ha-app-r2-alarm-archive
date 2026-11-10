@@ -1,0 +1,236 @@
+/* ha.css: Home Assistant's look for the ingress page of an app, 2026.11.
+ *
+ * One file, identical in every app repository (Chrony NTP, NVMe Monitor,
+ * Crash Guard, R2 Alarm Archive, UP-AirQuality); the app's own rules go into
+ * a second block after it. The values are the defaults of Home Assistant's
+ * frontend (light and dark); a page may take the theme in use from the page
+ * around the ingress frame by setting the same custom properties on :root.
+ *
+ * Building blocks, named after Home Assistant's own:
+ *   header > h1 + .actions > a.icon-button      the 56 px top app bar
+ *   main > .cards > .card > h2 + .content       ha-card in a responsive grid
+ *   .card > .card-actions                       the line of buttons under a card
+ *   .state.ok|.bad|.error > svg + text          a status line with an icon
+ *   .alert.info|.warning|.error|.success        ha-alert
+ *   table.kv, table.list (th[data-sort])        key/value rows, data table
+ *   .n .sub .muted .nowrap .scroll .opt         numbers, second line, helpers
+ *   .toolbar > .chip[.on] + label.search        filter chips and search field
+ *   .button[.filled|.danger], .icon-button      ha-button, ha-icon-button
+ *   dialog > form > h2 + .field + .buttons      ha-dialog with text fields
+ *   footer.version                              "<Name> <version>" at the bottom
+ * .opt is hidden below 600 px width.
+ */
+:root {
+  color-scheme: light dark;
+  --primary-background-color: #fafafa;
+  --secondary-background-color: #e5e5e5;
+  --card-background-color: #fff;
+  --primary-text-color: #141414;
+  --secondary-text-color: #5e5e5e;
+  --disabled-text-color: #bdbdbd;
+  --divider-color: rgba(0, 0, 0, 0.12);
+  --primary-color: #009ac7;
+  --text-primary-color: #fff;
+  --success-color: #43a047;
+  --warning-color: #ffa600;
+  --error-color: #db4437;
+  --info-color: #039be5;
+  --sidebar-background-color: var(--card-background-color);
+  --sidebar-text-color: var(--primary-text-color);
+  --sidebar-icon-color: var(--secondary-text-color);
+  --app-header-border-bottom: 1px solid var(--divider-color);
+  --ha-card-border-radius: 12px;
+  --ha-card-border-width: 1px;
+  --ha-card-border-color: var(--divider-color);
+  --ha-card-box-shadow: none;
+  --ha-font-family-body: Roboto, Noto, sans-serif;
+  --ha-font-size-s: 12px;
+  --ha-font-size-m: 14px;
+  --ha-font-size-l: 16px;
+  --ha-font-size-xl: 20px;
+  --ha-font-size-2xl: 24px;
+  --ha-font-weight-normal: 400;
+  --ha-font-weight-medium: 500;
+  --header-height: 56px;
+  --ha-hover: color-mix(in srgb, var(--primary-text-color) 6%, transparent);
+  --ha-danger: #b30532;
+  --ha-form-background: #f3f3f3;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --primary-background-color: #111;
+    --secondary-background-color: #282828;
+    --card-background-color: #1c1c1c;
+    --primary-text-color: #e1e1e1;
+    --secondary-text-color: #9b9b9b;
+    --disabled-text-color: #6f6f6f;
+    --divider-color: rgba(225, 225, 225, 0.12);
+    --ha-danger: #f3676c;
+    --ha-form-background: #363636;
+  }
+}
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  background: var(--primary-background-color);
+  color: var(--primary-text-color);
+  font: var(--ha-font-size-m)/1.5 var(--ha-font-family-body);
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--primary-color); text-decoration: none; }
+svg { width: 24px; height: 24px; fill: currentColor; flex: none; }
+[hidden] { display: none !important; }
+
+/* Top app bar */
+header {
+  position: sticky; top: 0; z-index: 2;
+  display: flex; align-items: center; height: var(--header-height); padding: 0 4px 0 16px;
+  background: var(--sidebar-background-color); color: var(--sidebar-text-color);
+  border-bottom: var(--app-header-border-bottom);
+}
+header h1 {
+  margin: 0; font-size: var(--ha-font-size-xl); font-weight: var(--ha-font-weight-normal); line-height: 32px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+header .actions { margin-left: auto; display: flex; align-items: center; }
+header .stamp { margin-right: 4px; font-size: var(--ha-font-size-s); color: var(--secondary-text-color); white-space: nowrap; }
+.icon-button {
+  display: inline-flex; align-items: center; justify-content: center; width: 48px; height: 48px; padding: 0;
+  border: 0; border-radius: 50%; background: none; color: var(--sidebar-icon-color); cursor: pointer;
+}
+.icon-button:hover { background: var(--ha-hover); }
+.icon-button.small { width: 40px; height: 40px; color: var(--secondary-text-color); }
+.icon-button.small svg { width: 20px; height: 20px; }
+.icon-button.busy svg { animation: ha-spin 0.8s linear infinite; }
+@keyframes ha-spin { to { transform: rotate(360deg); } }
+
+/* Content and cards */
+main { margin: 0 auto; padding: 16px; max-width: 1040px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 0 16px; }
+.card {
+  margin-bottom: 16px; overflow: hidden;
+  background: var(--card-background-color); color: var(--primary-text-color);
+  border: var(--ha-card-border-width) solid var(--ha-card-border-color);
+  border-radius: var(--ha-card-border-radius); box-shadow: var(--ha-card-box-shadow);
+}
+.card h2 {
+  margin: 0; padding: 24px 16px 16px;
+  font-size: var(--ha-font-size-2xl); font-weight: var(--ha-font-weight-normal); line-height: 32px;
+}
+.card .content { padding: 0 16px 16px; }
+.card-actions {
+  display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 8px 16px;
+  border-top: 1px solid var(--divider-color);
+}
+.card-actions .spacer { flex: 1; }
+
+/* Status lines and alerts */
+.state { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-weight: var(--ha-font-weight-medium); }
+.ok { color: var(--success-color); }
+.bad { color: var(--warning-color); }
+.error { color: var(--error-color); }
+.muted { color: var(--secondary-text-color); }
+.alert {
+  --alert-color: var(--info-color);
+  display: flex; align-items: flex-start; gap: 12px; margin-bottom: 16px; padding: 8px 12px;
+  border-radius: 4px; background: color-mix(in srgb, var(--alert-color) 12%, transparent);
+  color: var(--primary-text-color);
+}
+.alert > svg { color: var(--alert-color); margin-top: 0; }
+.alert > div { padding: 2px 0; }
+.alert.warning { --alert-color: var(--warning-color); }
+.alert.error { --alert-color: var(--error-color); }
+.alert.success { --alert-color: var(--success-color); }
+
+/* Tables */
+table { border-collapse: collapse; width: 100%; }
+th, td { text-align: left; padding: 8px 16px 8px 0; vertical-align: top; }
+td { border-top: 1px solid var(--divider-color); }
+th { font-weight: var(--ha-font-weight-medium); font-size: var(--ha-font-size-s); white-space: nowrap; }
+table.kv th {
+  width: 45%; font-size: var(--ha-font-size-m); font-weight: var(--ha-font-weight-normal);
+  color: var(--secondary-text-color); border-top: 1px solid var(--divider-color); white-space: normal;
+}
+table.kv tr:first-child th, table.kv tr:first-child td { border-top: 0; }
+.list th:first-child, .list td:first-child { padding-left: 16px; }
+.list th { height: 56px; vertical-align: middle; border-bottom: 1px solid var(--divider-color); }
+.list th[data-sort] { cursor: pointer; user-select: none; }
+.list th[data-sort]:hover { color: var(--primary-color); }
+.list th.asc::after { content: " ▲"; font-size: 9px; }
+.list th.desc::after { content: " ▼"; font-size: 9px; }
+.list td { height: 52px; vertical-align: middle; font-size: 13px; }
+.list tr:first-child td { border-top: 0; }
+.list tbody tr:hover { background: var(--ha-hover); }
+.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.nowrap { white-space: nowrap; }
+.sub { display: block; font-size: var(--ha-font-size-s); line-height: 16px; color: var(--secondary-text-color); }
+.scroll { overflow-x: auto; }
+.note { padding: 0 16px 16px; font-size: var(--ha-font-size-s); color: var(--secondary-text-color); }
+
+/* Filter chips and search */
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 0 16px 16px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px;
+  border: 1px solid var(--divider-color); border-radius: 8px; background: none; color: var(--primary-text-color);
+  font: inherit; font-size: 13px; font-weight: var(--ha-font-weight-medium); cursor: pointer;
+}
+.chip:hover { background: var(--ha-hover); }
+.chip.on { background: color-mix(in srgb, var(--primary-color) 15%, transparent); border-color: transparent; }
+.search {
+  display: flex; align-items: center; gap: 8px; margin-left: auto; height: 40px; padding: 0 12px;
+  border-radius: 20px; background: var(--ha-form-background); color: var(--secondary-text-color);
+}
+.search svg { width: 20px; height: 20px; }
+.search input { width: 180px; border: 0; outline: 0; background: none; color: var(--primary-text-color); font: inherit; }
+
+/* Buttons */
+.button {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 40px; padding: 0 16px;
+  border: 0; border-radius: 9999px; background: none; color: var(--primary-color);
+  font: inherit; font-weight: var(--ha-font-weight-medium); cursor: pointer;
+}
+.button:hover { background: color-mix(in srgb, var(--primary-color) 10%, transparent); }
+.button.filled { background: var(--primary-color); color: var(--text-primary-color); }
+.button.filled:hover { background: color-mix(in srgb, var(--primary-color) 85%, #000); }
+.button.danger { color: var(--ha-danger); }
+.button.danger:hover { background: color-mix(in srgb, var(--ha-danger) 10%, transparent); }
+.button:disabled { color: var(--disabled-text-color); background: none; cursor: default; }
+.button:focus-visible, .icon-button:focus-visible, .chip:focus-visible {
+  outline: 2px solid var(--primary-color); outline-offset: 2px;
+}
+
+/* Dialog */
+dialog {
+  width: min(100% - 32px, 560px); padding: 0; border: 0; border-radius: 24px;
+  background: var(--card-background-color); color: var(--primary-text-color); box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+}
+dialog::backdrop { background: rgba(0, 0, 0, 0.32); }
+dialog form { padding: 24px; }
+dialog h2 { margin: 0; font-size: var(--ha-font-size-2xl); font-weight: var(--ha-font-weight-normal); line-height: 32px; }
+.field { display: block; margin-top: 16px; }
+.field > span { display: block; margin-bottom: 4px; font-size: var(--ha-font-size-s); color: var(--secondary-text-color); }
+.field input, .field textarea, .field select {
+  width: 100%; padding: 12px; border: 0; border-bottom: 1px solid var(--secondary-text-color);
+  border-radius: 8px 8px 0 0; background: var(--ha-form-background); color: var(--primary-text-color);
+  font: inherit; resize: vertical;
+}
+.field input:focus, .field textarea:focus, .field select:focus {
+  outline: 0; border-bottom: 2px solid var(--primary-color); padding-bottom: 11px;
+}
+.count { display: block; text-align: right; font-size: var(--ha-font-size-s); color: var(--secondary-text-color); }
+.field-error { min-height: 20px; font-size: var(--ha-font-size-s); color: var(--error-color); }
+.buttons { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+.buttons .spacer { flex: 1; }
+
+/* Version line at the bottom, as on Home Assistant's own pages */
+footer.version {
+  text-align: center; color: var(--secondary-text-color); font-size: 12px; padding: 8px 0 24px;
+}
+
+@media (max-width: 600px) {
+  main { padding: 8px; }
+  .opt { display: none; }
+  .search { margin-left: 0; flex: 1 0 100%; }
+  .search input { width: 100%; }
+}

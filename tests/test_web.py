@@ -87,7 +87,7 @@ async def test_menu(client):
 async def test_overview(client):
     c, archive, _ = client
     page = await text(c, "/overview", {"X-Ingress-Path": "/api/hassio_ingress/abc"})
-    assert "Archivierung läuft" in page and 'class="back" href="/api/hassio_ingress/abc/"' in page
+    assert "Archivierung läuft" in page and 'class="icon-button back" href="/api/hassio_ingress/abc/"' in page
     assert "1.234" in page and "900.000" in page and "7,0 MB" in page and "2,0 MB" in page and "0,12 %" in page
     assert "Lifecycle- und Lock-Regeln passen" in page
     archive.language = "en"
@@ -331,7 +331,7 @@ async def test_version_at_the_bottom_of_every_page(client):
     for path in ("/", "/overview", "/details", f"/day/{DAY}", f"/snapshot/{DAY}/{FOLDER.rsplit('/', 1)[1]}",
                  "/queue"):
         page = await text(c, path)
-        assert page.endswith('<div class="about">R2 Alarm Archive 9.8.7</div></main></body></html>'), path
+        assert page.endswith('</main><footer class="version">R2 Alarm Archive 9.8.7</footer></body></html>'), path
 
 
 async def test_security_headers(client):
@@ -405,3 +405,15 @@ def test_cache_counts_its_size(tmp_path):
     cache.put("c", b"12")
     assert sum(p.stat().st_size for p in (tmp_path / "c").iterdir()) <= 10
     assert Cache(tmp_path / "c", max_bytes=10)._total == cache._total
+
+
+async def test_shared_stylesheet_first(client):
+    """ha.css, the same file in every app, comes unchanged and first; the
+    page's own rules follow in a second block."""
+    from pathlib import Path
+
+    c, _, _ = client
+    shared = (Path(__file__).parents[1] / "r2_alarm_archive/rootfs/usr/local/share/ha-app/ha.css").read_text()
+    page = await text(c, "/")
+    assert f"<style>{shared}</style><style>" in page
+    assert "footer.version" in shared
