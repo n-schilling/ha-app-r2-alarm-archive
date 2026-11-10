@@ -46,7 +46,9 @@ jobs:
         with:
           python-version: "3.14"
       - name: Install
-        run: pip install -r r2_alarm_archive/requirements.txt -r requirements_test.txt
+        run: |
+          pip install --require-hashes -r r2_alarm_archive/requirements.txt
+          pip install -r requirements_test.txt
       - name: Ruff
         run: ruff check r2_alarm_archive/rootfs/usr/lib/r2_archive tests scripts
       - name: Test

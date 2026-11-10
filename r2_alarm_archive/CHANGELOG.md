@@ -14,6 +14,7 @@ All notable changes to this app are documented here. The format follows [Keep a 
 
 - The web page uses the stylesheet shared by these apps, with Home Assistant 2026.11's look: colors, cards, top bar, alerts
 - Requires Home Assistant 2026.11 or later; the base image is pinned (`base-python:3.14-alpine3.24-2026.11.0`) and Dependabot proposes new ones
+- The image installs its Python packages only with the hashes pinned in `requirements.txt` (made from `requirements.in` with `uv pip compile`), so a build gets exactly the files reviewed
 - Snapshots no longer keep access tokens (`access_token`, `entity_picture`) in the attributes of the states and the panel
 - The camera pictures of a snapshot are taken at the same time; a series keeps its interval however long a picture takes
 - A ZIP export is built in a temporary file and streamed, reads R2 a few objects at a time and does not empty the page's cache; it needs the free tier guard's room for all its reads up front

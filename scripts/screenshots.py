@@ -3,7 +3,8 @@ served on 127.0.0.1 from the app's own code with the test fakes in place of
 Home Assistant, R2 and Cloudflare, and drawn by a headless Chromium.
 
     python3 -m venv .venv-shots
-    .venv-shots/bin/pip install -r r2_alarm_archive/requirements.txt -r requirements_test.txt playwright==1.64.1
+    .venv-shots/bin/pip install --require-hashes -r r2_alarm_archive/requirements.txt
+    .venv-shots/bin/pip install -r requirements_test.txt playwright==1.64.1
     .venv-shots/bin/playwright install chromium
     .venv-shots/bin/python scripts/screenshots.py
 

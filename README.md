@@ -78,11 +78,14 @@ The app is a Python package in [`r2_alarm_archive/rootfs/usr/lib/r2_archive`](r2
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install -r r2_alarm_archive/requirements.txt -r requirements_test.txt
+.venv/bin/pip install --require-hashes -r r2_alarm_archive/requirements.txt
+.venv/bin/pip install -r requirements_test.txt
 scripts/check.sh
 ```
 
 `scripts/check.sh` runs what CI runs (changelog, shellcheck, ruff, tests, and the image built and started when Docker runs; `--no-image` skips that). The screenshots come from `scripts/screenshots.py` (see its header for the setup): it serves the page with made-up data on 127.0.0.1 and draws it with headless Chromium.
+
+The image's packages are listed in [`requirements.in`](r2_alarm_archive/requirements.in); [`requirements.txt`](r2_alarm_archive/requirements.txt) pins them and everything they pull in with their hashes, and the image installs it with `--require-hashes`. After changing `requirements.in`, run `uv pip compile requirements.in --generate-hashes --universal --python-version 3.14 -o requirements.txt` in `r2_alarm_archive`.
 
 Releases: work on `dev`, raise `version` in `r2_alarm_archive/config.yaml` and add its section to the changelog; when CI is green on `main`, the release workflow tags the version and publishes the release with that section.
 

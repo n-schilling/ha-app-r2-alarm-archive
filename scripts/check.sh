@@ -7,8 +7,8 @@
 # Usage: scripts/check.sh [--no-image]
 #
 # The tools come from .venv when there is one (python3 -m venv .venv &&
-# .venv/bin/pip install -r r2_alarm_archive/requirements.txt -r
-# requirements_test.txt), otherwise from PATH. The app configuration linter
+# .venv/bin/pip install --require-hashes -r r2_alarm_archive/requirements.txt &&
+# .venv/bin/pip install -r requirements_test.txt), otherwise from PATH. The app configuration linter
 # (frenck/action-addon-linter) runs in CI only. The image step needs Docker;
 # CI builds both architectures.
 set -uo pipefail

@@ -3,8 +3,10 @@ FROM ghcr.io/home-assistant/base-python:3.14-alpine3.24-2026.11.0
 
 SHELL ["/bin/ash", "-o", "pipefail", "-c"]
 
+# requirements.txt pins every package with its hashes (uv pip compile from
+# requirements.in), so a build installs exactly the files reviewed
 COPY requirements.txt /tmp/
-RUN pip3 install --no-cache-dir --only-binary=:all: -r /tmp/requirements.txt \
+RUN pip3 install --no-cache-dir --only-binary=:all: --require-hashes -r /tmp/requirements.txt \
     && rm /tmp/requirements.txt
 
 COPY rootfs /
