@@ -1,4 +1,4 @@
-# R2 Alarm Archive app for Home Assistant
+# R2 Alarm Archive
 
 [![Release](https://img.shields.io/github/v/release/n-schilling/ha-app-r2-alarm-archive)](https://github.com/n-schilling/ha-app-r2-alarm-archive/releases)
 [![CI](https://github.com/n-schilling/ha-app-r2-alarm-archive/actions/workflows/ci.yaml/badge.svg?branch=main)](https://github.com/n-schilling/ha-app-r2-alarm-archive/actions/workflows/ci.yaml)
@@ -9,17 +9,53 @@
 
 A Home Assistant app that keeps the alarm log outside the house: it follows the log in the recorder and puts every entry into a Cloudflare R2 bucket, adds a snapshot of states and camera pictures whenever the alarm panel changes or an automation asks for one, and writes a summary of each day. Objects are created once and never overwritten; an optional free tier guard keeps the whole Cloudflare account 10 % below the limits of R2's free tier. A read-only page of its own in Home Assistant shows the archive, its days, snapshots and pictures, and the free tier in detail, without going to the Cloudflare dashboard.
 
-## The web page
+Requires Home Assistant 2026.11 or later.
 
-The page (**Open web UI** on the app's page, or in the sidebar with **Show in sidebar**) looks like Home Assistant's settings and takes over the theme in use. The screenshots show made-up demo data.
+## Screenshots
 
-| Menu | Details by month |
-|---|---|
-| ![Menu with Overview, Details, Queue and Settings](docs/screenshots/menu.png) | ![Archived days as a table grouped by month](docs/screenshots/details.png) |
-| **Overview** | **A day** |
-| ![Status, free tier usage and bucket rules](docs/screenshots/overview.png) | ![Log, snapshots and summary of one day](docs/screenshots/day.png) |
-| **Only days with an alarm** | **A snapshot with a picture series** |
-| ![Filter for days with an alarm](docs/screenshots/alarm-filter.png) | ![Change, user, pictures and states of a snapshot](docs/screenshots/snapshot.png) |
+The page looks like Home Assistant's settings and takes over the theme in use. The data in the pictures is made up for these pictures.
+
+<img src="docs/screenshots/menu.png" alt="Menu with Overview, Details, Queue and Settings" width="700">
+
+<img src="docs/screenshots/overview.png" alt="Overview: status, free tier usage of the account and the bucket, bucket rules" width="700">
+
+<img src="docs/screenshots/details.png" alt="Details: archived days as a table grouped by month" width="700">
+
+<img src="docs/screenshots/alarm-filter.png" alt="Details filtered to days with an alarm" width="700">
+
+<img src="docs/screenshots/day.png" alt="One day: log, snapshots and summary file" width="700">
+
+<img src="docs/screenshots/snapshot.png" alt="A snapshot of an alarm: change, picture series of two cameras and the states" width="700">
+
+<img src="docs/screenshots/queue.png" alt="Queue: objects waiting for R2" width="700">
+
+<img src="docs/screenshots/overview-dark.png" alt="Overview in dark mode" width="700">
+
+<img src="docs/screenshots/day-phone.png" alt="One day on a phone" width="300">
+
+## Overview
+
+```mermaid
+flowchart LR
+    log["logbook.log entries<br>of log_entity"] --> follow
+    panel["alarm_control_panel<br>changes"] --> follow
+    request["event<br>r2_alarm_archive_snapshot"] --> follow
+    cams["camera pictures,<br>states and history"] --> follow
+    subgraph app["R2 Alarm Archive app"]
+        follow["follow Home Assistant"] --> queue["queue in /data"]
+        queue --> guard{"free tier<br>guard"}
+        summary["daily summary<br>00:05"]
+        page["web page<br>(ingress)"]
+    end
+    guard --> bucket[("Cloudflare R2 bucket<br>protokoll/ snapshots/<br>zusammenfassung/")]
+    bucket --> summary --> bucket
+    bucket --> page
+    analytics["Cloudflare API<br>usage, bucket rules, token"] --> guard
+    app --> mqtt["MQTT entities:<br>Archiving, R2 connection,<br>Queue, Free tier …"]
+    mqtt --> auto["Your automations"]
+```
+
+How the log, snapshots, summaries, the free tier guard and the bucket rules work is in [the documentation](r2_alarm_archive/DOCS.md); changes are in the [changelog](r2_alarm_archive/CHANGELOG.md).
 
 ## Installation
 
@@ -33,125 +69,22 @@ The page (**Open web UI** on the app's page, or in the sidebar with **Show in si
    https://github.com/n-schilling/ha-app-r2-alarm-archive
    ```
 
-2. Open the app from the app store.
-3. Install **R2 Alarm Archive**, fill in the options and start it.
-
-See [the documentation](r2_alarm_archive/DOCS.md) for what to prepare in Cloudflare, the options, entities and troubleshooting. Changes are listed in the [changelog](r2_alarm_archive/CHANGELOG.md).
-
-## Setting up Home Assistant for the archive
-
-The app does not need to know how your alarm system is built. It archives two things you point it to: a **log** written with Home Assistant's logbook, and, optionally, **snapshots** of an alarm panel. Everything else stays in your own automations.
-
-### 1. A log entity
-
-Create one entity that carries the log, e.g. a toggle helper **Alarm log** (`input_boolean.alarm_log`) under **Settings → Devices & services → Helpers**. It is only an anchor: nothing ever switches it, and it must not be excluded from the recorder. Set it as `log_entity`.
-
-### 2. Write log entries
-
-Every call of `logbook.log` with that entity becomes one entry in the archive; its `message` is the text. Write entries wherever something worth keeping happens: when the panel changes, when arming is refused, when a sensor trips. A starting point that logs every change of the panel and who made it:
-
-```yaml
-alias: Alarm log – panel changes
-triggers:
-  - trigger: state
-    entity_id: alarm_control_panel.home
-    not_to: [unavailable, unknown]
-    not_from: [unavailable, unknown]
-actions:
-  - action: logbook.log
-    data:
-      name: Alarm
-      entity_id: input_boolean.alarm_log
-      message: >-
-        {{ trigger.from_state.state }} → {{ trigger.to_state.state }}
-        {%- set by = trigger.to_state.attributes.get('changed_by') %}
-        {%- if by %} by {{ by }}{% endif %}
-mode: queued
-```
-
-Write the message so it can be read on its own later, years from now and without Home Assistant: names instead of entity IDs, what happened and why. The daily summary shows each entry as `DD.MM.YYYY HH:MM:SS - <message>`.
-
-The log does not have to be an alarm log. Any entity works as `log_entity`, for example one for the door lock or for the safe; one app archives one log.
-
-### 3. Snapshots (optional)
-
-Set `alarm_panel` to an `alarm_control_panel` entity, and the app saves a snapshot each time the panel changes to one of `snapshot_states`. What goes in:
-
-- **States** of the entities in `snapshot_entities`, plus the panel itself. Put in what tells the story of an alarm: door and window contacts, motion sensors, persons. A group counts with its members, so listing your alarm groups is enough. `snapshot_all_entities` takes everything instead (larger, about 0.1 MB per snapshot for 1,500 entities).
-- **Pictures** of each camera in `cameras`, but only for the panel states in `camera_states` (by default only `triggered`): a series of `camera_pictures` (default 3), `camera_interval` seconds apart (default 10). A picture is about 0.6 MB, so pictures on every arming and disarming add up to a few hundred MB a month.
-
-The lists in the app's options have no entity picker: type the full entity ID, e.g. `camera.front_door`, and choose *Add custom item*.
-
-Without `alarm_panel` the app archives the log and the snapshots automations ask for.
-
-### 4. Snapshots on request (optional)
-
-An automation can ask for a snapshot at any time, whatever the panel's state: it fires the event `r2_alarm_archive_snapshot`, with an optional `reason` that the web page shows next to the snapshot. Such a snapshot always gets a picture series of every camera in `cameras`, also when `camera_states` would give none, and it does not count as an alarm. For example, a guest opens the study while the panel is disarmed:
-
-```yaml
-alias: Alarm archive – study opened
-triggers:
-  - trigger: state
-    entity_id: binary_sensor.study_door
-    to: "on"
-conditions:
-  - condition: state
-    entity_id: input_boolean.guests
-    state: "on"
-actions:
-  - event: r2_alarm_archive_snapshot
-    event_data:
-      reason: Guest opened the study
-mode: queued
-```
-
-The app hears the event only while it runs and is connected to Home Assistant; an event fired during a restart is not rebuilt later.
-
-### 5. React to the status (recommended)
-
-The app reports through MQTT discovery whether archiving works. For a dashboard one entity is enough: **Archiving** (`binary_sensor.r2_alarm_archive_archiving`) is on while the log reaches R2 and off when something is wrong; its attribute `problems` says what. The other entities (R2 connection, queue, last upload and summary, free tier usage) show the details.
-
-A notification when archiving stays broken:
-
-```yaml
-alias: Alarm archive – not working
-triggers:
-  - trigger: state
-    entity_id: binary_sensor.r2_alarm_archive_archiving
-    to: "off"
-    for: "00:15:00"
-actions:
-  - action: notify.notify
-    data:
-      title: Alarm archive
-      message: >-
-        {{ state_attr('binary_sensor.r2_alarm_archive_archiving', 'problems') | join(', ') }}
-mode: single
-```
-
-The entity IDs are those Home Assistant usually gives; check them on the device **R2 Alarm Archive**.
-
-### What you can configure
-
-| Area | Options |
-|---|---|
-| Cloudflare | `account_id`, `bucket`, `jurisdiction` (`default` or `eu`), the R2 key (`access_key_id`, `secret_access_key`), a read-only `api_token` |
-| What is archived | `log_entity`; for snapshots `alarm_panel`, `snapshot_states`, `snapshot_entities` or `snapshot_all_entities`, `cameras`, `camera_states`, `camera_pictures`, `camera_interval`; snapshots on request through the event `r2_alarm_archive_snapshot` |
-| Costs | `free_tier_guard`: keep the whole Cloudflare account 10 % below the limits of R2's free tier (on by default) |
-| Retention | `retention_log`, `retention_snapshots`, `retention_summaries`: days or `unlimited` |
-| Protection | `lock_log`, `lock_snapshots`, `lock_summaries`: bucket lock `off`, `indefinite` or days |
-| MQTT | `discovery_prefix`; `mqtt_host` and friends only for a broker the Supervisor does not know |
-
-Retention and lock are rules of the bucket: you set them in Cloudflare, and the app checks once a day that they match these options (see [the documentation](r2_alarm_archive/DOCS.md#retention-and-bucket-lock)). Fixed by design: one object per entry that is never overwritten, the folder names in the bucket, and the daily summary at 00:05 in Home Assistant's time zone.
+2. Install **R2 Alarm Archive** from the app store.
+3. Prepare Cloudflare and Home Assistant as in [Requirements](r2_alarm_archive/DOCS.md#requirements), fill in the options and start the app.
 
 ## Development
 
-The app is a Python package in [`r2_alarm_archive/rootfs/usr/lib/r2_archive`](r2_alarm_archive/rootfs/usr/lib/r2_archive). Tests:
+The app is a Python package in [`r2_alarm_archive/rootfs/usr/lib/r2_archive`](r2_alarm_archive/rootfs/usr/lib/r2_archive); the page's look comes from the stylesheet shared by these apps, [`ha.css`](r2_alarm_archive/rootfs/usr/local/share/ha-app/ha.css), which stays identical in every app.
 
 ```bash
-pip install -r r2_alarm_archive/requirements.txt pytest pytest-aiohttp
-pytest
+python3 -m venv .venv
+.venv/bin/pip install -r r2_alarm_archive/requirements.txt -r requirements_test.txt
+scripts/check.sh
 ```
+
+`scripts/check.sh` runs what CI runs (changelog, shellcheck, ruff, tests, and the image built and started when Docker runs; `--no-image` skips that). The screenshots come from `scripts/screenshots.py` (see its header for the setup): it serves the page with made-up data on 127.0.0.1 and draws it with headless Chromium.
+
+Releases: work on `dev`, raise `version` in `r2_alarm_archive/config.yaml` and add its section to the changelog; when CI is green on `main`, the release workflow tags the version and publishes the release with that section.
 
 ## Support
 
