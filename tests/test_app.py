@@ -383,7 +383,8 @@ async def test_stopping_logs_no_warning(tmp_path, caplog):
 
 async def test_restart_of_home_assistant(tmp_path, monkeypatch, caplog):
     """A restart is one line when the connection goes and one when it is back;
-    only a long absence or a real fault is a warning."""
+    only a long absence or a real fault is a warning. A fault of the app itself
+    is an error and the loop connects again instead of ending the app."""
     archive, ha, _, _, clock = build(tmp_path, alarm_panel="")
     caplog.set_level("INFO", logger=app_module.__name__)
     restart = HAError("closed the connection (restart or stop)", down=True)
@@ -397,7 +398,7 @@ async def test_restart_of_home_assistant(tmp_path, monkeypatch, caplog):
 
     async def wait_closed():
         step = script.pop(0)
-        raise RuntimeError("end of test") if step is None else step
+        raise RuntimeError("a fault of the app") if step is None else step
 
     async def config():
         return {"time_zone": "Europe/Berlin"}
@@ -408,13 +409,18 @@ async def test_restart_of_home_assistant(tmp_path, monkeypatch, caplog):
     async def follow_log():
         await asyncio.Event().wait()
 
+    class Stop(BaseException):
+        pass
+
     async def sleep(seconds):
+        if not script:
+            raise Stop      # the loop went on after the fault: the end of the test
         clock.moment += timedelta(seconds=seconds)
     ha.connect, ha.config, ha.wait_closed, ha.close = connect, config, wait_closed, close
     archive.follow_log = follow_log
     monkeypatch.setattr(app_module.asyncio, "sleep", sleep)
     monkeypatch.setattr(app_module, "BACKOFF", (5, 15, 60, 300))
-    with pytest.raises(ExceptionGroup):
+    with pytest.raises(Stop):
         await archive.ha_loop()
     lines = [(r.levelname, r.getMessage()) for r in caplog.records]
     assert lines == [
@@ -428,6 +434,7 @@ async def test_restart_of_home_assistant(tmp_path, monkeypatch, caplog):
                     "is not running (Supervisor answers 502)"),
         ("WARNING", "Home Assistant: login refused; connecting again in 300 s"),
         ("INFO", "Connected to Home Assistant again after 26 min 20 s, time zone Europe/Berlin"),
+        ("ERROR", "Following Home Assistant failed; connecting again"),
     ]
 
 
@@ -449,14 +456,16 @@ async def test_picture_series(tmp_path, monkeypatch):
     meta = json.loads(archive.queue.body(next(i for i in archive.queue.items() if i.key.endswith("meta.json"))))
     assert meta["cameras"] == {"camera.front": "kamera_front.jpg"}
     assert meta["series"] == {"camera.front": ["kamera_front.jpg", "kamera_front_2.jpg", "kamera_front_3.jpg"]}
-    assert sleeps == [1, 1]
+    # The pictures keep their pace: the second 1 s after the first, the third 2 s after it
+    assert sleeps == [pytest.approx(1, abs=0.01), pytest.approx(2, abs=0.01)]
 
 
 async def test_index_is_read_from_r2_when_empty(tmp_path):
     archive, _, r2, _, _ = build(tmp_path)
     archive._restored.clear()
     folder = "snapshots/2026/10/30/20261030T200000.000000Z_triggered/"
-    r2.objects.update({"protokoll/2026/10/30/a.json": b"a", "protokoll/2026/10/31/b.json": b"b",
+    r2.objects.update({"protokoll/2026/10/30/20261030T190000.000000Z_0123abcd.json": b"a",
+                       "protokoll/2026/10/31/20261031T070000.000000Z_4567cdef.json": b"b",
                        folder + "meta.json": b"{}", "zusammenfassung/2026/10/2026-10-30.txt": b"s",
                        "zusammenfassung/2026/10/2026-10-30-nachtrag-1.txt": b"s"})
     await archive.restore_index()
@@ -646,3 +655,95 @@ async def test_ha_loop_follows_requests_without_panel(tmp_path):
         task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await task
+
+
+# --- Review fixes -----------------------------------------------------------------
+async def test_index_takes_only_the_apps_keys(tmp_path, caplog):
+    """Keys somebody else put into the bucket never reach the index (and so
+    neither the web page nor an export)."""
+    archive, _, r2, _, _ = build(tmp_path)
+    archive._restored.clear()
+    good = "snapshots/2026/10/30/20261030T200000.000000Z_triggered/meta.json"
+    evil = 'snapshots/2026/10/30/20261030T200000.000000Z_x"><svg onload=alert(1)>/meta.json'
+    slip = "snapshots/2026/10/30/../../../../x.plist"
+    r2.objects.update({good: b"{}", evil: b"{}", slip: b"x", "zusammenfassung/2026/10/notes.txt": b"x"})
+    await archive.restore_index()
+    assert archive.state.data["uploaded"] == {"2026-10-30": [good]}
+    assert "3 keys in the bucket are not the app's" in caplog.text
+
+
+async def test_refused_key_is_a_problem_without_uploads(tmp_path, monkeypatch):
+    """A revoked R2 key shows at the next check, not only at the next alarm;
+    R2 itself stays reachable (ADR: a refused login is no lost connection)."""
+    archive, _, r2, _, _ = build(tmp_path)
+    archive.ha_connected = True
+
+    async def once(seconds):
+        raise asyncio.CancelledError
+    monkeypatch.setattr(app_module.asyncio, "sleep", once)
+    r2.fail = R2Error("HEAD: HTTP 403 AccessDenied", 403, "AccessDenied")
+    with contextlib.suppress(asyncio.CancelledError):
+        await archive.check_loop()
+    assert archive.r2_connected is True
+    assert archive.health() == ["R2 check failed: HEAD: HTTP 403 AccessDenied"]
+    assert archive.health()[0].code == "r2_check"
+    r2.fail = None
+    with contextlib.suppress(asyncio.CancelledError):
+        await archive.check_loop()
+    assert archive.health() == []
+
+
+async def test_missing_body_does_not_stop_the_uploads(tmp_path):
+    archive, _, r2, _, _ = build(tmp_path)
+    archive.ha_connected = True
+    archive._enqueue("protokoll/2026/10/31/a.json", "log", "2026-10-31", b"a", "application/json")
+    archive._enqueue("protokoll/2026/10/31/b.json", "log", "2026-10-31", b"b", "application/json")
+    (tmp_path / "queue" / "0000000001.bin").unlink()
+    async with running(archive.upload_loop()) as tasks:
+        await settle(lambda: not len(archive.queue))
+        assert not tasks[0].done()
+    assert list(r2.objects) == ["protokoll/2026/10/31/b.json"]
+    assert archive.health() == ["1 objects in quarantine"]
+
+
+async def test_uploads_save_the_state_once_per_batch(tmp_path, monkeypatch):
+    archive, _, r2, _, _ = build(tmp_path)
+    saves = []
+    original = archive.state.save
+    monkeypatch.setattr(archive.state, "save", lambda: (saves.append(len(archive.queue)), original()))
+    for n in range(20):
+        archive._enqueue(f"protokoll/2026/10/31/{n:02d}.json", "log", "2026-10-31", b"x", "application/json")
+    async with running(archive.upload_loop()):
+        await settle(lambda: not len(archive.queue))
+    assert len(r2.objects) == 20 and saves == [20]
+    # Saved before the queue let go of them: a crash in between uploads them again
+    assert len(State(tmp_path / "state.json").data["uploaded"]["2026-10-31"]) == 20
+
+
+async def test_snapshot_pictures_at_once_and_without_tokens(tmp_path):
+    archive, ha, _, _, _ = build(tmp_path, cameras=["camera.front", "camera.back"])
+    ha.pictures["camera.back"] = b"\xff\xd8back"
+    started = []
+    release = asyncio.Event()
+    original = ha.camera
+
+    async def slow(entity_id):
+        started.append(entity_id)
+        await release.wait()
+        return await original(entity_id)
+    ha.camera = slow
+    ha.state_list = [{"entity_id": PANEL, "state": "triggered", "last_changed": "t",
+                      "attributes": {"friendly_name": "Home", "access_token": "a", "entity_picture": "/x?token=t"}}]
+    when = datetime(2026, 10, 31, 10, 17, 33, tzinfo=UTC)
+    snapshot = asyncio.create_task(archive.snapshot(
+        when, "armed_night", "triggered", {"access_token": "a", "code_format": None}, None, reconstructed=False))
+    await settle(lambda: len(started) == 2)        # both cameras asked before either answered
+    release.set()
+    await snapshot
+    folder = "snapshots/2026/10/31/20261031T101733.000000Z_triggered/"
+    items = {i.key: i for i in archive.queue.items()}
+    meta = json.loads(archive.queue.body(items[folder + "meta.json"]))
+    assert meta["attributes"] == {"code_format": None}
+    assert meta["cameras"] == {"camera.front": "kamera_front.jpg", "camera.back": "kamera_back.jpg"}
+    states = unzip(archive.queue.body(items[folder + "zustand.json.gz"]))
+    assert states["states"][0]["attributes"] == {"friendly_name": "Home"}

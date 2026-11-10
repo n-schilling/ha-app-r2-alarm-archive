@@ -1,13 +1,16 @@
 """Keeps the whole Cloudflare account 10 % below every limit of R2's free tier.
 
 The account's usage comes from GraphQL Analytics, which lags a few minutes;
-the app's own operations since the last poll are counted on top. Without a
-recent usage figure nothing passes.
+the app's own operations are counted on top until the analytics surely show
+them (LAG after they happened), so for a while some count twice, never none.
+Without a recent usage figure nothing passes.
 """
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
+from typing import NamedTuple
 
 from .cloudflare import Usage, month_start
 
@@ -20,6 +23,15 @@ LIMITS = {"class_a": int(FREE_CLASS_A * MARGIN), "class_b": int(FREE_CLASS_B * M
           "storage": int(FREE_STORAGE * MARGIN)}
 # A usage figure older than this does not count
 MAX_AGE = 3600.0
+# How long the analytics may lag behind the app's own operations, in seconds
+LAG = 600.0
+
+
+class Operations(NamedTuple):
+    at: float            # loop time
+    class_a: int
+    class_b: int
+    storage: int
 
 
 @dataclass
@@ -28,18 +40,28 @@ class Guard:
     usage: Usage | None = None
     polled_at: float | None = None          # loop time of the last good poll
     month: tuple[int, int] | None = None    # (year, month) the usage is for
-    own: dict[str, int] = field(default_factory=lambda: {"class_a": 0, "class_b": 0, "storage": 0})
+    # The app's own operations the analytics may not show yet
+    recent: list[Operations] = field(default_factory=list)
 
     def update(self, usage: Usage, now: float, month: tuple[int, int]) -> None:
+        if month != self.month:
+            self.recent.clear()          # last month's operations no longer count
         self.usage, self.polled_at, self.month = usage, now, month
-        self.own = {"class_a": 0, "class_b": 0, "storage": 0}
+        self.recent = [ops for ops in self.recent if ops.at > now - LAG]
+
+    @property
+    def own(self) -> dict[str, int]:
+        return {"class_a": sum(ops.class_a for ops in self.recent),
+                "class_b": sum(ops.class_b for ops in self.recent),
+                "storage": sum(ops.storage for ops in self.recent)}
 
     def totals(self) -> dict[str, int] | None:
         if self.usage is None:
             return None
-        return {"class_a": self.usage.class_a + self.own["class_a"],
-                "class_b": self.usage.class_b + self.own["class_b"],
-                "storage": self.usage.storage_bytes + self.own["storage"]}
+        own = self.own
+        return {"class_a": self.usage.class_a + own["class_a"],
+                "class_b": self.usage.class_b + own["class_b"],
+                "storage": self.usage.storage_bytes + own["storage"]}
 
     def valid(self, now: float, month: tuple[int, int]) -> bool:
         return (self.usage is not None and self.polled_at is not None
@@ -57,10 +79,13 @@ class Guard:
                 and totals["class_b"] + class_b < LIMITS["class_b"]
                 and totals["storage"] + storage < LIMITS["storage"])
 
-    def count(self, *, class_a: int = 0, class_b: int = 0, storage: int = 0) -> None:
-        self.own["class_a"] += class_a
-        self.own["class_b"] += class_b
-        self.own["storage"] += storage
+    def count(self, *, class_a: int = 0, class_b: int = 0, storage: int = 0,
+              now: float | None = None) -> None:
+        """Counts own operations; `now` is the loop time (asyncio's loop clock
+        is time.monotonic)."""
+        if class_a or class_b or storage:
+            self.recent.append(Operations(time.monotonic() if now is None else now,
+                                          class_a, class_b, storage))
 
     def limit_reached(self, now: float, month: tuple[int, int]) -> bool | None:
         """For the sensor: True at the limit, None without a usage figure (the

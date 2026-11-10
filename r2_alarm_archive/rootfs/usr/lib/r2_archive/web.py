@@ -9,19 +9,24 @@ page around the ingress frame; without it the page falls back to Home
 Assistant's default colors. Everything shown from the bucket goes through the
 app; objects never change, so what was read once is kept in a cache in /data.
 Every read from R2 passes the free tier guard; at the limit the pages show
-what the cache has.
+what the cache has. Only keys as the app writes them are shown or packed,
+and every value is escaped for where it lands; a Content-Security-Policy
+allows the one script and nothing else on top.
 """
 
 from __future__ import annotations
 
 import asyncio
+import base64
 import calendar
+import contextlib
 import gzip
+import hashlib
 import html
-import io
 import json
 import logging
 import os
+import tempfile
 import time
 import zipfile
 from datetime import UTC, date, datetime
@@ -41,6 +46,8 @@ PORT = 8099              # the Supervisor's default ingress port
 # The Supervisor's ingress proxy; nothing else may talk to the page
 INGRESS_PEER = "172.30.32.2"
 CACHE_BYTES = 200 * 10**6
+# Reads from R2 at the same time for a ZIP export
+EXPORT_READS = 4
 CONTENT_TYPES = {".json": "application/json", ".jpg": "image/jpeg", ".gz": "application/gzip",
                  ".txt": "text/plain; charset=utf-8"}
 
@@ -78,6 +85,8 @@ TEXT = {
         "quarantine_info": "Queue entries the app could not read. They lie in {} (reachable e.g. with Samba or "
                            "an editor app); the problem goes once they are deleted.",
         "moved": "Set aside", "missing_files": "Missing files", "reason": "Reason",
+        "no_lock": "No bucket lock is set: the app's access key can delete what is archived. A lock "
+                   "rule per prefix prevents that (lock_log, lock_snapshots, lock_summaries).",
     },
     "de": {
         "title": "Alarm-Archiv", "overview": "Übersicht", "details": "Detailansicht", "queue": "Warteschlange",
@@ -116,6 +125,8 @@ TEXT = {
                            "(erreichbar z. B. über Samba oder eine Editor-App); die Meldung verschwindet, "
                            "sobald sie gelöscht sind.",
         "moved": "Beiseitegelegt", "missing_files": "Fehlende Dateien", "reason": "Grund",
+        "no_lock": "Keine Bucket-Sperre gesetzt: Der Zugriffsschlüssel der App kann Archiviertes löschen. "
+                   "Eine Lock-Regel je Präfix verhindert das (lock_log, lock_snapshots, lock_summaries).",
     },
 }
 
@@ -139,12 +150,17 @@ PANEL_STATES = {
            "pending": "Eingangsverzögerung", "triggered": "ALARM", a.REQUEST: "Auf Anfrage"},
 }
 
-# The app's problem texts (see Archive.health) in German
+# The app's problems (see Archive.health) in German, by their code
 PROBLEMS_DE = {
-    "Home Assistant not connected": "App ohne Verbindung zu Home Assistant",
-    "R2 not reachable": "Cloudflare R2 nicht erreichbar",
-    "free tier limit reached": "Free-Tier-Grenze erreicht",
-    "no R2 usage figure for the free tier guard": "Keine Verbrauchszahl von Cloudflare, Uploads angehalten",
+    "ha": "App ohne Verbindung zu Home Assistant",
+    "r2": "Cloudflare R2 nicht erreichbar",
+    "r2_check": "Prüfung von R2 fehlgeschlagen: {error}",
+    "upload": "Letzter Upload fehlgeschlagen: {error}",
+    "quarantine": "{count} Objekte in Quarantäne",
+    "waiting": "{count} Objekte warten, das älteste seit {minutes} min",
+    "limit": "Free-Tier-Grenze erreicht",
+    "no_figure": "Keine Verbrauchszahl von Cloudflare, Uploads angehalten",
+    "summary": "Tageszusammenfassung vom {day} fehlt",
 }
 
 # Material Design Icons (Apache 2.0), as Home Assistant draws them
@@ -267,6 +283,7 @@ header .actions { margin-left: auto; display: flex; }
 .chip.on { background: color-mix(in srgb, var(--primary-color) 15%, transparent); border-color: transparent; }
 .chip:hover { background: color-mix(in srgb, var(--primary-text-color) 6%, transparent); }
 summary a.next:hover { color: var(--primary-color); }
+.about { padding: 16px; text-align: center; color: var(--secondary-text-color); font-size: 12px; }
 .notice { padding: 12px 16px; margin-bottom: 16px; border-radius: var(--ha-card-border-radius);
   background: color-mix(in srgb, var(--warning-color) 15%, transparent); }
 @media (max-width: 600px) {
@@ -298,6 +315,12 @@ SCRIPT = """(() => { try {
   take();
   new MutationObserver(take).observe(outer, { attributes: true, attributeFilter: ["style", "class"] });
 } catch (e) {} })();""".replace("NAMES", json.dumps(THEME_VARS))
+# Only the page's own inline script runs, pictures come from the page itself;
+# the inline styles are the page's own (style-src without a hash: the menu's
+# icon colors are style attributes)
+CSP = ("default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; "
+       f"script-src 'sha256-{base64.b64encode(hashlib.sha256(SCRIPT.encode()).digest()).decode()}'; "
+       "base-uri 'none'; form-action 'none'; frame-ancestors 'self'")
 
 
 def size_text(n: float, lang: str = "en") -> str:
@@ -320,20 +343,14 @@ def number(n: float, lang: str) -> str:
 
 
 def problem_text(p: str, lang: str) -> str:
-    if lang != "de":
-        return p
-    if p in PROBLEMS_DE:
-        return PROBLEMS_DE[p]
-    if p.startswith("last upload failed: "):
-        return "Letzter Upload fehlgeschlagen: " + p[20:]
-    if " objects waiting, the oldest for " in p:
-        words = p.split(" ")
-        return f"{words[0]} Objekte warten, das älteste seit {words[-2]} min"
-    if p.endswith(" objects in quarantine"):
-        return f"{p.split(' ')[0]} Objekte in Quarantäne"
-    if p.startswith("summary of ") and p.endswith(" missing"):
-        return f"Tageszusammenfassung vom {p[11:-8]} fehlt"
-    return p
+    """A problem of Archive.health in the page's language."""
+    code = getattr(p, "code", None)
+    if lang != "de" or code not in PROBLEMS_DE:
+        return str(p)
+    params = dict(p.params)
+    if code == "summary":
+        params["day"] = date.fromisoformat(str(params["day"])).strftime("%d.%m.%Y")
+    return PROBLEMS_DE[code].format(**params)
 
 
 class Cache:
@@ -341,31 +358,57 @@ class Cache:
     when the cache grows beyond its size."""
 
     def __init__(self, folder: Path, max_bytes: int = CACHE_BYTES) -> None:
-        self._folder = folder
+        self.folder = folder
         self._max = max_bytes
         folder.mkdir(parents=True, exist_ok=True)
+        # Its total size, counted once here and then kept up to date
+        self._total = sum(p.stat().st_size for p in self._files())
+
+    def _files(self) -> list[Path]:
+        return [p for p in self.folder.iterdir() if p.is_file() and not p.name.startswith(".")]
 
     def _path(self, key: str) -> Path:
-        return self._folder / quote(key, safe="")
+        return self.folder / quote(key, safe="")
+
+    def has(self, key: str) -> bool:
+        return self._path(key).is_file()
 
     def get(self, key: str) -> bytes | None:
+        path = self._path(key)
         try:
-            data = self._path(key).read_bytes()
+            data = path.read_bytes()
+            os.utime(path)
         except OSError:
             return None
-        os.utime(self._path(key))
         return data
 
     def put(self, key: str, data: bytes) -> None:
-        write_atomic(self._path(key), data)
-        files = sorted((p for p in self._folder.iterdir() if not p.name.startswith(".")),
-                       key=lambda p: p.stat().st_mtime)
-        total = sum(p.stat().st_size for p in files)
-        for old in files:
-            if total <= self._max:
+        path = self._path(key)
+        with contextlib.suppress(OSError):
+            self._total -= path.stat().st_size
+        write_atomic(path, data)
+        self._total += len(data)
+        if self._total <= self._max:
+            return
+        # Over the size: the least recently read go first
+        for old in sorted(self._files(), key=lambda p: p.stat().st_mtime):
+            if self._total <= self._max:
                 break
-            total -= old.stat().st_size
-            old.unlink(missing_ok=True)
+            with contextlib.suppress(OSError):
+                size = old.stat().st_size
+                old.unlink()
+                self._total -= size
+
+
+def valid_day(day: str) -> bool:
+    """A day as YYYY-MM-DD, and a real one."""
+    if len(day) != 10 or day[4] != "-" or day[7] != "-":
+        return False
+    try:
+        date.fromisoformat(day)
+    except ValueError:
+        return False
+    return True
 
 
 class Blocked(Exception):
@@ -374,15 +417,17 @@ class Blocked(Exception):
 
 class Web:
     def __init__(self, archive, cache: Cache, allowed_peers: set[str] | None = None,
-                 slug: str | None = None) -> None:
+                 slug: str | None = None, version: str = "") -> None:
         self.archive = archive
         self.cache = cache
         self.allowed = {INGRESS_PEER} if allowed_peers is None else allowed_peers
         # The app's slug for the link to its options; none outside the Supervisor
         self.slug = slug
+        # The app's version (config.yaml, given to the image when it is built), shown on every page
+        self.version = version
 
     def app(self) -> web.Application:
-        app = web.Application(middlewares=[self._only_ingress])
+        app = web.Application(middlewares=[self._only_ingress, self._security_headers])
         app.router.add_get("/", self.menu)
         app.router.add_get("/overview", self.overview)
         app.router.add_get("/details", self.details)
@@ -408,6 +453,14 @@ class Web:
         if self.allowed and request.remote not in self.allowed:
             raise web.HTTPForbidden(text="only through Home Assistant")
         return await handler(request)
+
+    @web.middleware
+    async def _security_headers(self, request: web.Request, handler):
+        response = await handler(request)
+        response.headers.setdefault("Content-Security-Policy", CSP)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("Referrer-Policy", "same-origin")
+        return response
 
     # --- Helpers -------------------------------------------------------------------
     def t(self, key: str) -> str:
@@ -477,7 +530,7 @@ class Web:
 
     def page(self, request: web.Request, title: str, body: str, back: str | None = None,
              width: str = "", actions: str = "") -> web.Response:
-        base = request.headers.get("X-Ingress-Path", "")
+        base = html.escape(request.headers.get("X-Ingress-Path", ""), quote=True)
         body = body.replace("{base}", base)
         back_link = (f'<a class="back" href="{base}{back}" title="{self.t("back")}">{icon("back")}</a>'
                      if back is not None else "")
@@ -487,7 +540,11 @@ class Web:
             f"<title>{html.escape(title)}</title><style>{STYLE}</style><script>{SCRIPT}</script></head><body>"
             f"<header>{back_link}<h1>{html.escape(title)}</h1>"
             f'<div class="actions">{actions.replace("{base}", base)}</div></header>'
-            f'<main class="{width}">{body}</main></body></html>'))
+            f'<main class="{width}">{body}{self.about()}</main></body></html>'))
+
+    def about(self) -> str:
+        """The app and its version, at the bottom of every page."""
+        return f'<div class="about">{html.escape(f"R2 Alarm Archive {self.version}".strip())}</div>'
 
     def card(self, title: str | None, content: str, padded: bool = True) -> str:
         head = f"<h2>{html.escape(title)}</h2>" if title else ""
@@ -500,22 +557,28 @@ class Web:
         body = "".join(rows) or f'<div class="row empty"><div>{html.escape(empty)}</div></div>'
         return f'<div class="table cols-{cols}"><div class="row thead">{header}</div>{body}</div>'
 
-    async def read(self, key: str) -> bytes:
-        """An object from the cache, or from R2 past the guard."""
+    async def read(self, key: str, keep: bool = True) -> bytes:
+        """An object from the cache, or from R2 past the guard; `keep`: put
+        what R2 gave into the cache (not for an export, it would push out
+        everything else)."""
         if (data := self.cache.get(key)) is not None:
             return data
-        archive = self.archive
-        loop_now = asyncio.get_running_loop().time()
-        if not archive.guard.allows(loop_now, utc_month(archive.now()), class_b=1):
+        if not self.allows_reads(1):
             raise Blocked(key)
-        data = await archive.r2.get(key)
-        archive.guard.count(class_b=1)
-        self.cache.put(key, data)
+        data = await self.archive.r2.get(key)
+        self.archive.guard.count(class_b=1)
+        if keep:
+            self.cache.put(key, data)
         return data
+
+    def allows_reads(self, count: int) -> bool:
+        archive = self.archive
+        return archive.guard.allows(asyncio.get_running_loop().time(), utc_month(archive.now()),
+                                    class_b=count)
 
     def day_keys(self, day: str) -> tuple[list[str], list[str]]:
         """(log keys, snapshot folders) of a day from the local index."""
-        keys = self.archive.state.data["uploaded"].get(day, [])
+        keys = [k for k in self.archive.state.data["uploaded"].get(day, []) if a.valid_key(k)]
         logs = sorted(k for k in keys if k.startswith(a.PREFIX["log"]))
         folders = sorted({k.rsplit("/", 1)[0] for k in keys if k.startswith(a.PREFIX["snapshots"])})
         return logs, folders
@@ -570,6 +633,8 @@ class Web:
             rules = ('<ul class="problems">' + "".join(f'<li class="bad">{html.escape(p)}</li>'
                                                        for p in archive.rule_problems)
                      + "</ul><pre>" + html.escape("\n".join(commands)) + "</pre>")
+        if all(lock is None for lock in archive.cfg.lock.values()):
+            rules += f'<p class="muted">{self.t("no_lock")}</p>'
         body += self.card(self.t("rules"), rules)
         return self.page(request, self.t("overview"), body, back="/")
 
@@ -656,7 +721,7 @@ class Web:
         for month, days in months.items():
             counts = [self.day_counts(day) for day in days]
             rows = "".join(
-                f'<a class="row" href="{{base}}/day/{day}"><div>{self.day_text(day, weekday=True)}</div>'
+                f'<a class="row" href="{{base}}/day/{quote(day)}"><div>{self.day_text(day, weekday=True)}</div>'
                 f"<div class='n'>{entries}</div><div class='n'>{snaps}</div>"
                 f"<div class='n{' alarm' if alarms else ''}'>{alarms or '–'}</div>"
                 f"<div class='n opt'>{files or '–'}</div>{icon('next', 'next')}</a>"
@@ -683,10 +748,8 @@ class Web:
 
     async def day(self, request: web.Request) -> web.Response:
         day = request.match_info["day"]
-        try:
-            date.fromisoformat(day)
-        except ValueError as err:
-            raise web.HTTPNotFound() from err
+        if not valid_day(day):
+            raise web.HTTPNotFound()
         logs, folders = self.day_keys(day)
         blocked = False
         lines = []
@@ -712,7 +775,7 @@ class Web:
             label = html.escape(self.panel_state(state))
             if state == a.REQUEST and (reason := await self.reason(folder)):
                 label += f' <span class="muted">· {html.escape(reason)}</span>'
-            snaps.append(f'<a class="row" href="{{base}}/snapshot/{day}/{quote(name)}">'
+            snaps.append(f'<a class="row" href="{{base}}/snapshot/{day}/{quote(name, safe="")}">'
                          f'<div class="nowrap">{self.clock(self.folder_time(folder))}</div>'
                          f"<div class='{'alarm' if state == 'triggered' else ''}'>{label}</div>"
                          f"<div class='n'>{pictures or '–'}</div>{icon('next', 'next')}</a>")
@@ -743,10 +806,15 @@ class Web:
 
     async def snapshot(self, request: web.Request) -> web.Response:
         day, name = request.match_info["day"], request.match_info["name"]
-        folder = f"{a.PREFIX['snapshots']}{a.day_folder(day)}{name}"
-        keys = [k for k in self.archive.state.data["uploaded"].get(day, []) if k.startswith(folder + "/")]
-        if not keys:
+        if not valid_day(day):
             raise web.HTTPNotFound()
+        folder = f"{a.PREFIX['snapshots']}{a.day_folder(day)}{name}"
+        keys = [k for k in self.archive.state.data["uploaded"].get(day, [])
+                if k.startswith(folder + "/") and a.valid_key(k)]
+        if not keys or not a.valid_folder(folder):
+            raise web.HTTPNotFound()
+        # The folder has the app's form (no quotes or brackets); encoded all the same
+        link = html.escape(quote(folder, safe="/"), quote=True)
         back = f"/day/{day}"
         try:
             meta = json.loads(await self.read(folder + "/meta.json"))
@@ -764,13 +832,13 @@ class Web:
         shots = [(cam, file, n) for cam, first in (meta.get("cameras") or {}).items()
                  for n, file in enumerate((meta.get("series") or {}).get(cam) or [first], 1) if file in present]
         pictures = "".join(
-            f'<figure><img src="{{base}}/file/{folder}/{quote(file)}" alt="{html.escape(cam)}">'
+            f'<figure><img src="{{base}}/file/{link}/{quote(file)}" alt="{html.escape(cam)}">'
             f'<figcaption><span>{html.escape(cam)}{f" · {n}" if n > 1 or len((meta.get("series") or {}).get(cam) or []) > 1 else ""}</span>'
-            f'<a class="button" href="{{base}}/file/{folder}/{quote(file)}?download=1">'
+            f'<a class="button" href="{{base}}/file/{link}/{quote(file)}?download=1">'
             f"{icon('download')}{self.t('download')}</a></figcaption></figure>"
             for cam, file, n in shots)
         missing = meta.get("missing_cameras") or []
-        downloads = "".join(f'<a class="button" href="{{base}}/file/{folder}/{f}?download=1">{icon("download")}{f}</a>'
+        downloads = "".join(f'<a class="button" href="{{base}}/file/{link}/{f}?download=1">{icon("download")}{f}</a>'
                             for f in ("meta.json", "zustand.json.gz"))
         info = ('<table class="kv">'
                 f"<tr><th>{self.t('from_to')}</th><td>{html.escape(self.panel_state(meta.get('from')))} → "
@@ -807,57 +875,83 @@ class Web:
                                              (self.t("moved"), "")], rows, ""))
         return self.page(request, self.t("queue"), table, back="/", width="wide")
 
-    async def export(self, request: web.Request) -> web.Response:
+    async def export(self, request: web.Request) -> web.StreamResponse:
         """A day (YYYY-MM-DD) or a month (YYYY-MM) as one ZIP: every archived
         object under its key, and per day the log as readable text. Objects
-        R2 no longer has (e.g. after the retention) are listed instead."""
+        R2 no longer has (e.g. after the retention) are listed instead.
+
+        The ZIP is built in a temporary file in /data and then streamed, so a
+        month of pictures never sits in memory; objects are read from R2 a few
+        at a time and not put into the page's cache."""
         period = request.match_info["period"]
         data = self.archive.state.data
-        try:
-            if len(period) == 10:
-                date.fromisoformat(period)
-            else:
-                date.fromisoformat(period + "-01")
-        except ValueError as err:
-            raise web.HTTPNotFound() from err
+        if not (valid_day(period) or valid_day(period + "-01")) or len(period) not in (7, 10):
+            raise web.HTTPNotFound()
         days = sorted(d for d in set(data["uploaded"]) | set(data["summaries"]) if d.startswith(period))
         if not days:
             raise web.HTTPNotFound()
+        plan = []
+        for day in days:
+            logs, _ = self.day_keys(day)
+            keys = sorted(k for k in data["uploaded"].get(day, []) if a.valid_key(k))
+            keys += [a.summary_key(day, part) for part in range((data["summaries"].get(day) or {}).get("files", 0))]
+            plan.append((day, set(logs), keys))
+        # Better no ZIP than half of one: the guard must allow every read up front
+        if not self.allows_reads(sum(1 for _, _, keys in plan for k in keys if not self.cache.has(k))):
+            raise web.HTTPServiceUnavailable(text=self.t("cached_only"))
         root = f"alarm-archiv-{period}"
-        buffer = io.BytesIO()
+        folder = self.cache.folder.parent
+        with tempfile.TemporaryFile(dir=folder, prefix=".export-") as tmp:
+            try:
+                await self._write_zip(tmp, root, plan)
+            except Blocked as err:
+                raise web.HTTPServiceUnavailable(text=self.t("cached_only")) from err
+            size = tmp.tell()
+            tmp.seek(0)
+            response = web.StreamResponse(headers={
+                "Content-Type": "application/zip", "Content-Length": str(size),
+                "Content-Disposition": f'attachment; filename="{root}.zip"'})
+            await response.prepare(request)
+            while chunk := tmp.read(1 << 20):
+                await response.write(chunk)
+            await response.write_eof()
+        return response
+
+    async def _write_zip(self, tmp, root: str, plan: list[tuple[str, set[str], list[str]]]) -> None:
         missing: list[str] = []
-        try:
-            with zipfile.ZipFile(buffer, "w") as out:
-                for day in days:
-                    logs, _ = self.day_keys(day)
-                    keys = sorted(data["uploaded"].get(day, []))
-                    keys += [a.summary_key(day, part) for part in range((data["summaries"].get(day) or {}).get("files", 0))]
-                    entries = []
-                    for key in keys:
-                        try:
-                            body = await self.read(key)
-                        except R2Error:
+        limit = asyncio.Semaphore(EXPORT_READS)
+
+        async def fetch(key: str) -> bytes | None:
+            async with limit:
+                try:
+                    return await self.read(key, keep=False)
+                except R2Error:
+                    return None
+
+        with zipfile.ZipFile(tmp, "w") as out:
+            for day, logs, keys in plan:
+                entries = []
+                for start in range(0, len(keys), EXPORT_READS):
+                    chunk = keys[start:start + EXPORT_READS]
+                    for key, body in zip(chunk, await asyncio.gather(*map(fetch, chunk)), strict=True):
+                        if body is None:
                             missing.append(key)
                             continue
                         packed = zipfile.ZIP_STORED if key.endswith((".jpg", ".gz")) else zipfile.ZIP_DEFLATED
                         out.writestr(f"{root}/{key}", body, compress_type=packed)
                         if key in logs:
                             entries.append((key, body))
-                    out.writestr(f"{root}/protokoll-{day}.txt",
-                                 a.summary_text(day, entries, sorted({k.rsplit("/", 1)[0] for k in keys
-                                                                     if k.startswith(a.PREFIX["snapshots"])}),
-                                                self.tz, 0, self.archive.now()),
-                                 compress_type=zipfile.ZIP_DEFLATED)
-                if missing:
-                    out.writestr(f"{root}/fehlende-dateien.txt", "\n".join(missing) + "\n")
-        except Blocked as err:
-            raise web.HTTPServiceUnavailable(text=self.t("cached_only")) from err
-        return web.Response(body=buffer.getvalue(), content_type="application/zip",
-                            headers={"Content-Disposition": f'attachment; filename="{root}.zip"'})
+                out.writestr(f"{root}/protokoll-{day}.txt",
+                             a.summary_text(day, entries, sorted({k.rsplit("/", 1)[0] for k in keys
+                                                                 if k.startswith(a.PREFIX["snapshots"])}),
+                                            self.tz, 0, self.archive.now()),
+                             compress_type=zipfile.ZIP_DEFLATED)
+            if missing:
+                out.writestr(f"{root}/fehlende-dateien.txt", "\n".join(missing) + "\n")
 
     async def file(self, request: web.Request) -> web.Response:
         key = request.match_info["key"]
-        if ".." in key or not key.startswith(tuple(a.PREFIX.values())):
+        if not a.valid_key(key):
             raise web.HTTPNotFound()
         try:
             data = await self.read(key)

@@ -26,7 +26,7 @@ from .config import Config
 from .guard import LIMITS, Guard, utc_month
 from .ha import HA, HAError
 from .r2 import R2, R2AuthError, R2Error
-from .store import Queue, State
+from .store import Item, Queue, State
 
 LOGGER = logging.getLogger(__name__)
 
@@ -47,11 +47,44 @@ SUMMARY_GRACE = timedelta(hours=1)
 # api_token: checked daily, warned about this long before it expires
 TOKEN_INTERVAL = 24 * 3600
 TOKEN_WARN = timedelta(days=14)
+# The state file is written at the latest this long after an upload, or when the queue is empty
+SAVE_EVERY = 5.0
+
+# Why archiving does not work, in English for the MQTT attribute; the web page
+# translates them by their code
+PROBLEMS = {
+    "ha": "Home Assistant not connected",
+    "r2": "R2 not reachable",
+    "r2_check": "R2 check failed: {error}",
+    "upload": "last upload failed: {error}",
+    "quarantine": "{count} objects in quarantine",
+    "waiting": "{count} objects waiting, the oldest for {minutes} min",
+    "limit": "free tier limit reached",
+    "no_figure": "no R2 usage figure for the free tier guard",
+    "summary": "summary of {day} missing",
+}
+
+
+class Problem(str):
+    """A problem as its English text, with its code and values for translations."""
+
+    code: str
+    params: dict[str, object]
+
+    def __new__(cls, code: str, **params: object) -> Problem:
+        self = super().__new__(cls, PROBLEMS[code].format(**params))
+        self.code, self.params = code, params
+        return self
 
 
 def duration(span: timedelta) -> str:
     minutes, seconds = divmod(round(span.total_seconds()), 60)
     return f"{minutes} min {seconds} s" if minutes else f"{seconds} s"
+
+
+def pages(keys: list[str]) -> int:
+    """List requests (Class A operations) for this many keys, 1000 per page."""
+    return max(1, -(-len(keys) // 1000))
 
 
 def iso(moment: datetime) -> str:
@@ -74,6 +107,7 @@ class Archive:
         self.r2_connected: bool | None = None
         self.ha_connected = False
         self.upload_error: str | None = None      # the last upload failed with this
+        self.check_error: str | None = None       # R2 answered the last check with this error
         self.rule_problems: list[str] | None = None
         self.token_checked = False           # api_token verified at least once
         self.token_expiry: datetime | None = None   # None: it never expires
@@ -84,34 +118,36 @@ class Archive:
         self._series: set[asyncio.Task] = set()     # picture series still being taken
 
     # --- Status ---------------------------------------------------------------
-    def health(self) -> list[str]:
+    def health(self) -> list[Problem]:
         """Why archiving does not work right now; empty while it does: Home
-        Assistant connected, uploads succeed, nothing waits too long, the
-        guard has a figure below the limit, no summary is overdue."""
+        Assistant connected, R2 takes the key, uploads succeed, nothing waits
+        too long, the guard has a figure below the limit, no summary is overdue."""
         reasons = []
         if not self.ha_connected:
-            reasons.append("Home Assistant not connected")
+            reasons.append(Problem("ha"))
         if self.r2_connected is False:
-            reasons.append("R2 not reachable")
+            reasons.append(Problem("r2"))
+        if self.check_error:
+            reasons.append(Problem("r2_check", error=self.check_error))
         if self.upload_error:
-            reasons.append(f"last upload failed: {self.upload_error}")
+            reasons.append(Problem("upload", error=self.upload_error))
         if set_aside := {q.name.rsplit(".", 1)[0] for q in self.queue.quarantined()}:
-            reasons.append(f"{len(set_aside)} objects in quarantine")
+            reasons.append(Problem("quarantine", count=len(set_aside)))
         oldest = self.queue.oldest()
         if oldest is not None and clock_time.time() - oldest > STUCK_AFTER:
-            reasons.append(f"{len(self.queue)} objects waiting, the oldest for "
-                           f"{int((clock_time.time() - oldest) // 60)} min")
+            reasons.append(Problem("waiting", count=len(self.queue),
+                                   minutes=int((clock_time.time() - oldest) // 60)))
         limit = self.guard.limit_reached(asyncio.get_running_loop().time(), utc_month(self.now()))
         if limit:
-            reasons.append("free tier limit reached")
+            reasons.append(Problem("limit"))
         elif limit is None:
-            reasons.append("no R2 usage figure for the free tier guard")
+            reasons.append(Problem("no_figure"))
         if self.tz is not None:
             local = self.now().astimezone(self.tz)
             for day in self._summary_days(local.date()):
                 due = datetime.combine(date.fromisoformat(day) + timedelta(days=1), SUMMARY_AT, self.tz)
                 if local > due + SUMMARY_GRACE:
-                    reasons.append(f"summary of {day} missing")
+                    reasons.append(Problem("summary", day=day))
                     break
         return reasons
 
@@ -151,6 +187,11 @@ class Archive:
     def _changed(self) -> None:
         self.changed.set()
 
+    def _set_check_error(self, error: str | None) -> None:
+        if self.check_error != error:
+            self.check_error = error
+            self._changed()
+
     def _set_r2(self, connected: bool) -> None:
         if self.r2_connected != connected:
             self.r2_connected = connected
@@ -158,7 +199,7 @@ class Archive:
 
     # --- Queue ------------------------------------------------------------------
     def _done(self, day: str, key: str) -> bool:
-        return key in self.state.data["uploaded"].get(day, []) or key in self.queue
+        return self.state.has(day, key) or key in self.queue
 
     def _enqueue(self, key: str, kind: str, day: str, body: bytes, content_type: str) -> None:
         if not self._done(day, key) and self.queue.add(key, kind, day, body, content_type):
@@ -166,43 +207,82 @@ class Archive:
             self._changed()
 
     async def upload_loop(self) -> None:
+        """Uploads the queue in order. The state file is written for a batch
+        of uploads, and only then are they taken off the queue: a crash in
+        between uploads them again, which R2 answers with 'there already'."""
         failures = 0
-        while True:
-            items = self.queue.items()
-            if not items:
-                self._wake.clear()
-                await self._wake.wait()
-                continue
-            item = items[0]
-            loop_now = asyncio.get_running_loop().time()
-            if not self.guard.allows(loop_now, utc_month(self.now()), class_a=1, storage=item.size):
-                self._changed()
-                await self._sleep_or_wake(60)
-                continue
-            try:
-                created = await self.r2.put_once(item.key, self.queue.body(item), item.content_type)
-            except R2Error as err:
-                self._set_r2(not err.unreachable)
-                self.upload_error = str(err)
-                self._changed()
-                delay = BACKOFF[min(failures, len(BACKOFF) - 1)]
-                failures += 1
-                level = logging.WARNING if err.unreachable or failures <= 1 else logging.ERROR
-                if isinstance(err, R2AuthError):
-                    level = logging.ERROR
-                LOGGER.log(level, "Upload of %s failed: %s; again in %d s", item.key, err, delay)
-                await asyncio.sleep(delay)
-                continue
-            failures = 0
-            self._set_r2(True)
-            self.upload_error = None
-            self.guard.count(class_a=1, storage=item.size if created else 0)
-            self.state.uploaded(item.day, item.key)
-            self.state.data["last_upload"] = iso(self.now())
-            self.state.save()
+        uploaded: list[Item] = []      # in R2, not yet in the saved state
+        since = 0.0
+        loop = asyncio.get_running_loop()
+        try:
+            while True:
+                if uploaded and loop.time() - since >= SAVE_EVERY:
+                    self._save_uploaded(uploaded)
+                waiting = {item.seq for item in uploaded}
+                items = [item for item in self.queue.items() if item.seq not in waiting]
+                if not items:
+                    self._save_uploaded(uploaded)
+                    self._wake.clear()
+                    await self._wake.wait()
+                    continue
+                item = items[0]
+                if not uploaded:
+                    since = loop.time()
+                result = await self._upload(item, failures)
+                if result is True:
+                    failures = 0
+                    uploaded.append(item)
+                elif result is False:
+                    failures += 1
+        finally:
+            self._save_uploaded(uploaded)
+
+    def _save_uploaded(self, uploaded: list[Item]) -> None:
+        if not uploaded:
+            return
+        self.state.save()
+        for item in uploaded:
             self.queue.done(item)
-            LOGGER.debug("%s %s", "Uploaded" if created else "Already in R2:", item.key)
+        uploaded.clear()
+        self._changed()
+
+    async def _upload(self, item: Item, failures: int) -> bool | None:
+        """One upload: True when R2 has the object, False when the upload
+        failed (after the backoff delay), None when it waits for the guard or
+        the item went to the quarantine."""
+        loop_now = asyncio.get_running_loop().time()
+        if not self.guard.allows(loop_now, utc_month(self.now()), class_a=1, storage=item.size):
             self._changed()
+            await self._sleep_or_wake(60)
+            return None
+        try:
+            body = self.queue.body(item)
+        except OSError as err:
+            # The body file is gone or broken: set it aside instead of blocking the queue
+            self.queue.set_aside(item, err)
+            self._changed()
+            return None
+        try:
+            created = await self.r2.put_once(item.key, body, item.content_type)
+        except R2Error as err:
+            self._set_r2(not err.unreachable)
+            self.upload_error = str(err)
+            self._changed()
+            delay = BACKOFF[min(failures, len(BACKOFF) - 1)]
+            level = logging.WARNING if err.unreachable or failures == 0 else logging.ERROR
+            if isinstance(err, R2AuthError):
+                level = logging.ERROR
+            LOGGER.log(level, "Upload of %s failed: %s; again in %d s", item.key, err, delay)
+            await asyncio.sleep(delay)
+            return False
+        self._set_r2(True)
+        self.upload_error = None
+        self.guard.count(class_a=1, storage=item.size if created else 0)
+        self.state.uploaded(item.day, item.key)
+        self.state.data["last_upload"] = iso(self.now())
+        LOGGER.debug("%s %s", "Uploaded" if created else "Already in R2:", item.key)
+        self._changed()
+        return True
 
     async def check_loop(self) -> None:
         """Checks the R2 connection at start and every r2_check_interval
@@ -215,9 +295,12 @@ class Archive:
                     await self.r2.check()
                 except R2Error as err:
                     self._set_r2(not err.unreachable)
+                    # R2 answered, but refuses: e.g. a revoked key or a deleted bucket
+                    self._set_check_error(None if err.unreachable else str(err))
                     LOGGER.warning("R2 check: %s", err)
                 else:
                     self._set_r2(True)
+                    self._set_check_error(None)
                 self.guard.count(class_b=1)
                 await asyncio.sleep(self.cfg.r2_check_interval * 60)
             else:
@@ -276,6 +359,11 @@ class Archive:
                     warned = True
                 if away is None:
                     away = self.now()
+            except* Exception as group:
+                # A fault of this app while following Home Assistant: log it and
+                # connect again, archiving and the upload go on meanwhile
+                LOGGER.error("Following Home Assistant failed; connecting again",
+                             exc_info=group.exceptions[0])
             finally:
                 if self.ha_connected:
                     self.ha_connected = False
@@ -399,13 +487,22 @@ class Archive:
                 folder, day = a.snapshot_folder(slot, new, self.tz)
         elif self._done(day, folder + "meta.json"):
             return
-        current = await self.ha.states()
+        cameras = list(self.cfg.cameras if requested or new in self.cfg.camera_states else ())
+        # The pictures first and all at once, so they are closest to the moment;
+        # a rebuilt snapshot has none
+        taking = asyncio.ensure_future(self._pictures([] if reconstructed else cameras))
+        try:
+            current = await self.ha.states()
+        except BaseException:
+            taking.cancel()
+            raise
         entities = await self._entities(current)
         if requested:
             panel = next((s for s in current if s["entity_id"] == self.cfg.alarm_panel), None) \
                 if self.cfg.alarm_panel else None
             old = panel.get("state") if panel else None
             attributes = (panel or {}).get("attributes") or {}
+        attributes = a.without_secrets(attributes)
         if reconstructed:
             history = await self.ha.history(entities, iso(moment), iso(moment + timedelta(milliseconds=1)))
             states = []
@@ -414,25 +511,24 @@ class Archive:
                 if first:
                     changed = first.get("lc") or first.get("lu")
                     states.append({"entity_id": entity, "state": first.get("s"),
-                                   "attributes": first.get("a") or {},
+                                   "attributes": a.without_secrets(first.get("a") or {}),
                                    "last_changed": iso(datetime.fromtimestamp(float(changed), UTC))
                                    if changed else None})
         else:
             wanted = set(entities)
             states = [{"entity_id": s["entity_id"], "state": s.get("state"),
-                       "attributes": s.get("attributes") or {}, "last_changed": s.get("last_changed")}
+                       "attributes": a.without_secrets(s.get("attributes") or {}),
+                       "last_changed": s.get("last_changed")}
                       for s in current if s["entity_id"] in wanted]
         pictures: dict[str, str | None] = {}
         series: dict[str, list[str]] = {}
-        for camera in self.cfg.cameras if requested or new in self.cfg.camera_states else ():
+        shots = await taking
+        for camera in cameras:
             name = a.camera_file(camera)
-            if reconstructed:
-                pictures[camera] = None
-                continue
-            try:
-                picture = await self.ha.camera(camera)
-            except HAError as err:
-                LOGGER.warning("No picture for the snapshot: %s", err)
+            picture = shots.get(camera)
+            if not isinstance(picture, bytes):
+                if picture is not None:
+                    LOGGER.warning("No picture for the snapshot: %s", picture)
                 pictures[camera] = None
                 continue
             self._enqueue(folder + name, "snapshots", day, picture, "image/jpeg")
@@ -448,20 +544,39 @@ class Archive:
             # The rest of the series after the meta file: a restart loses only those pictures
             task = asyncio.create_task(self._take_series(folder, day, series))
             self._series.add(task)
-            task.add_done_callback(self._series.discard)
+            task.add_done_callback(self._series_done)
         LOGGER.info("Snapshot %s queued (%d states, %d pictures)%s", folder, len(states),
                     sum(1 for p in pictures.values() if p), f": {reason}" if reason else "")
 
+    async def _pictures(self, cameras: list[str]) -> dict[str, bytes | HAError]:
+        """One picture of each camera, taken at the same time."""
+        results = await asyncio.gather(*(self.ha.camera(c) for c in cameras), return_exceptions=True)
+        out: dict[str, bytes | HAError] = {}
+        for camera, result in zip(cameras, results, strict=True):
+            if isinstance(result, BaseException) and not isinstance(result, HAError):
+                raise result
+            out[camera] = result
+        return out
+
     async def _take_series(self, folder: str, day: str, series: dict[str, list[str]]) -> None:
+        """The further pictures of a series, every camera_interval seconds from
+        the first, however long a picture takes."""
+        loop = asyncio.get_running_loop()
+        start = loop.time()
         for number in range(1, self.cfg.camera_pictures):
-            await asyncio.sleep(self.cfg.camera_interval)
+            await asyncio.sleep(max(0.0, start + number * self.cfg.camera_interval - loop.time()))
+            shots = await self._pictures(list(series))
             for camera, names in series.items():
-                try:
-                    picture = await self.ha.camera(camera)
-                except HAError as err:
-                    LOGGER.warning("No picture %d of the series: %s", number + 1, err)
+                picture = shots[camera]
+                if isinstance(picture, HAError):
+                    LOGGER.warning("No picture %d of the series: %s", number + 1, picture)
                     continue
                 self._enqueue(folder + names[number], "snapshots", day, picture, "image/jpeg")
+
+    def _series_done(self, task: asyncio.Task) -> None:
+        self._series.discard(task)
+        if not task.cancelled() and (err := task.exception()) is not None:
+            LOGGER.error("Picture series failed", exc_info=err)
 
     # --- Index ----------------------------------------------------------------------
     async def restore_index(self) -> None:
@@ -489,17 +604,26 @@ class Archive:
             break
         self._set_r2(True)
         # One Class A operation per page of 1000 keys
-        self.guard.count(class_a=sum(max(1, -(-len(keys) // 1000)) for keys in found.values()))
+        self.guard.count(class_a=sum(pages(keys) for keys in found.values()))
+        # Only keys as the app writes them: anything else in the bucket (other
+        # tools, or somebody with the key) never reaches the index and the page
+        foreign = 0
         for key in found["log"] + found["snapshots"]:
-            if day := a.key_day(key):
+            if a.valid_key(key) and (day := a.key_day(key)):
                 self.state.uploaded(day, key)
+            else:
+                foreign += 1
         for key in found["summaries"]:
             if parsed := a.summary_part(key):
                 day, part = parsed
                 keys = data["uploaded"].get(day, [])
                 folders = {k.rsplit("/", 1)[0] + "/" for k in keys if k.startswith(a.PREFIX["snapshots"])}
-                done = data["summaries"].setdefault(day, {"covered": sorted(set(keys) | folders), "files": 0})
-                done["files"] = max(done["files"], part + 1)
+                done = data["summaries"].get(day) or {"covered": sorted(set(keys) | folders), "files": 0}
+                self.state.set_summary(day, done["covered"], max(done["files"], part + 1))
+            else:
+                foreign += 1
+        if foreign:
+            LOGGER.warning("Index: %d keys in the bucket are not the app's and were left out", foreign)
         self.state.save()
         if found["log"] or found["snapshots"] or found["summaries"]:
             LOGGER.info("Index read from R2: %d log entries, %d snapshot files, %d summaries of %d days",
@@ -600,15 +724,7 @@ class Archive:
                 day += timedelta(days=1)
         days |= {d for d in self.state.data["uploaded"] if date.fromisoformat(d) < today}
         waiting = self.queue.days()
-        out = []
-        for day in sorted(days):
-            done = self.state.data["summaries"].get(day)
-            uploaded = set(self.state.data["uploaded"].get(day, []))
-            if day in waiting:
-                continue
-            if done is None or not uploaded <= set(done["covered"]):
-                out.append(day)
-        return out
+        return [day for day in sorted(days) if day not in waiting and not self.state.summary_complete(day)]
 
     async def summary_loop(self) -> None:
         await self._ready.wait()
@@ -638,7 +754,10 @@ class Archive:
         folder = a.day_folder(day)
         log_keys = await self.r2.list(a.PREFIX["log"] + folder)
         snapshot_keys = await self.r2.list(a.PREFIX["snapshots"] + folder)
-        self.guard.count(class_a=2)
+        # One Class A operation per page of 1000 keys
+        self.guard.count(class_a=pages(log_keys) + pages(snapshot_keys))
+        log_keys = [k for k in log_keys if a.valid_key(k)]
+        snapshot_keys = [k for k in snapshot_keys if a.valid_key(k)]
         self._set_r2(True)
         done = self.state.data["summaries"].get(day) or {"covered": [], "files": 0}
         covered = set(done["covered"])
@@ -647,8 +766,7 @@ class Archive:
         all_covered = sorted(covered | set(log_keys) | set(snapshot_keys) | set(new_folders)
                              | set(self.state.data["uploaded"].get(day, [])))
         if done["files"] and not new_logs and not new_folders:
-            done["covered"] = all_covered
-            self.state.data["summaries"][day] = done
+            self.state.set_summary(day, all_covered, done["files"])
             self.state.save()
             return True
         if not self.guard.allows(loop.time(), month, class_b=len(new_logs)):
@@ -665,7 +783,7 @@ class Archive:
             if created:
                 break
             part += 1      # the file is there already, e.g. after /data was lost
-        self.state.data["summaries"][day] = {"covered": all_covered, "files": part + 1}
+        self.state.set_summary(day, all_covered, part + 1)
         self.state.data["last_summary"] = iso(self.now())
         self.state.save()
         LOGGER.info("Summary %s written (%d entries)", a.summary_key(day, part), len(entries))

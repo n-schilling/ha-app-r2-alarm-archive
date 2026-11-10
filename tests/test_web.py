@@ -2,16 +2,19 @@
 the guard, and that only the ingress proxy gets in."""
 
 import asyncio
+import dataclasses
 import gzip
 import json
 from datetime import UTC, datetime
+from urllib.parse import quote
 
 import pytest
 
 from conftest import BERLIN, Clock, FakeCloudflare, FakeHA, FakeR2, make_config
 from r2_archive import archive as a
-from r2_archive.app import Archive
+from r2_archive.app import Archive, Problem
 from r2_archive.cloudflare import Usage
+from r2_archive.guard import LIMITS
 from r2_archive.store import Queue, State
 from r2_archive.web import Cache, Web, problem_text
 
@@ -56,7 +59,8 @@ def seeded(tmp_path, usage=USAGE):
 @pytest.fixture
 async def client(tmp_path, aiohttp_client):
     archive, r2 = seeded(tmp_path)
-    web = Web(archive, Cache(tmp_path / "cache"), allowed_peers=set(), slug="local_r2_alarm_archive")
+    web = Web(archive, Cache(tmp_path / "cache"), allowed_peers=set(), slug="local_r2_alarm_archive",
+              version="9.8.7")
     return await aiohttp_client(web.app()), archive, r2
 
 
@@ -180,8 +184,17 @@ def test_cache_limit(tmp_path):
 
 
 def test_problem_texts():
-    assert problem_text("3 objects waiting, the oldest for 20 min", "de") == "3 Objekte warten, das älteste seit 20 min"
-    assert problem_text("R2 not reachable", "en") == "R2 not reachable"
+    waiting = Problem("waiting", count=3, minutes=20)
+    assert waiting == "3 objects waiting, the oldest for 20 min"
+    assert problem_text(waiting, "de") == "3 Objekte warten, das älteste seit 20 min"
+    assert problem_text(Problem("summary", day="2026-10-31"), "de") == "Tageszusammenfassung vom 31.10.2026 fehlt"
+    assert problem_text(Problem("r2_check", error="HEAD: HTTP 403"), "de") == \
+        "Prüfung von R2 fehlgeschlagen: HEAD: HTTP 403"
+    assert problem_text(Problem("r2"), "en") == "R2 not reachable"
+    # Every problem has a German text
+    from r2_archive.app import PROBLEMS
+    from r2_archive.web import PROBLEMS_DE
+    assert set(PROBLEMS) == set(PROBLEMS_DE)
 
 
 async def test_user_without_person(tmp_path):
@@ -213,7 +226,7 @@ async def test_export(client):
     assert f'href="/export/{DAY}.zip"' in day
     assert 'href="/export/2026-10.zip"' in await text(c, "/details")
     # A snapshot file R2 no longer has, e.g. after the retention
-    archive.state.uploaded(DAY, f"{FOLDER}/weg.json")
+    archive.state.uploaded(DAY, f"{FOLDER}/kamera_back.jpg")
     resp = await c.get(f"/export/{DAY}.zip")
     assert resp.status == 200 and resp.headers["Content-Disposition"] == f'attachment; filename="alarm-archiv-{DAY}.zip"'
     names = zipfile.ZipFile(io.BytesIO(await resp.read())).namelist()
@@ -222,7 +235,7 @@ async def test_export(client):
     assert sum(n.startswith(root + "protokoll/") for n in names) == 2
     zipped = zipfile.ZipFile(io.BytesIO(await (await c.get(f"/export/{DAY}.zip")).read()))
     assert "ALARM <ausgelöst>" in zipped.read(root + f"protokoll-{DAY}.txt").decode()
-    assert zipped.read(root + "fehlende-dateien.txt").decode() == f"{FOLDER}/weg.json\n"
+    assert zipped.read(root + "fehlende-dateien.txt").decode() == f"{FOLDER}/kamera_back.jpg\n"
     month = zipfile.ZipFile(io.BytesIO(await (await c.get("/export/2026-10.zip")).read())).namelist()
     assert "alarm-archiv-2026-10/" + f"{FOLDER}/meta.json" in month
     for bad in ("/export/2026-13.zip", "/export/1999-01.zip", "/export/kaputt.zip"):
@@ -310,3 +323,85 @@ async def test_request_without_panel_or_reason(client):
     page = await text(c, f"/snapshot/{DAY}/{REQUEST}")
     assert "– → Auf Anfrage" in page and "Grund" not in page
     assert "<div class=''>Auf Anfrage</div>" in await text(c, f"/day/{DAY}")
+
+
+# --- Review fixes -----------------------------------------------------------------
+async def test_version_at_the_bottom_of_every_page(client):
+    c, _, _ = client
+    for path in ("/", "/overview", "/details", f"/day/{DAY}", f"/snapshot/{DAY}/{FOLDER.rsplit('/', 1)[1]}",
+                 "/queue"):
+        page = await text(c, path)
+        assert page.endswith('<div class="about">R2 Alarm Archive 9.8.7</div></main></body></html>'), path
+
+
+async def test_security_headers(client):
+    import base64
+    import hashlib
+
+    from r2_archive.web import SCRIPT
+    c, _, _ = client
+    for path in ("/", f"/file/{FOLDER}/kamera_front.jpg"):
+        resp = await c.get(path)
+        assert resp.headers["X-Content-Type-Options"] == "nosniff"
+        csp = resp.headers["Content-Security-Policy"]
+        digest = base64.b64encode(hashlib.sha256(SCRIPT.encode()).digest()).decode()
+        assert f"script-src 'sha256-{digest}'" in csp and "default-src 'none'" in csp
+        assert "frame-ancestors 'self'" in csp
+    # The page carries exactly that script
+    assert f"<script>{SCRIPT}</script>" in await text(c, "/")
+
+
+async def test_foreign_keys_never_reach_the_page(client):
+    """A key with HTML in its folder (from a bucket somebody else wrote to)
+    is neither linked nor served, and an export skips a path that climbs out."""
+    import io
+    import zipfile
+    c, archive, r2 = client
+    evil = 'snapshots/2026/10/31/20261031T000000.000000Z_x"><svg onload=alert(1)>'
+    slip = "snapshots/2026/10/31/../../../../../x.plist"
+    for key in (f"{evil}/meta.json", slip):
+        r2.objects[key] = b"{}"
+        archive.state.uploaded(DAY, key)
+    page = await text(c, f"/day/{DAY}")
+    assert "onload" not in page and "20261031T000000" not in page
+    assert (await c.get(f"/snapshot/{DAY}/" + quote(evil.rsplit("/", 1)[1], safe=""))).status == 404
+    assert (await c.get(f"/file/{evil}/meta.json")).status == 404
+    assert (await c.get("/file/snapshots/2026/10/31/x/meta.json")).status == 404
+    names = zipfile.ZipFile(io.BytesIO(await (await c.get(f"/export/{DAY}.zip")).read())).namelist()
+    assert not any(".." in n or "onload" in n for n in names)
+
+
+async def test_snapshot_links_are_encoded(client):
+    c, _, _ = client
+    page = await text(c, f"/snapshot/{DAY}/{FOLDER.rsplit('/', 1)[1]}", {"X-Ingress-Path": '/a"b'})
+    assert '/a&quot;b/file/' in page and '/a"b' not in page
+
+
+async def test_lock_hint(client):
+    c, archive, _ = client
+    assert "Keine Bucket-Sperre gesetzt" in await text(c, "/overview")
+    archive.cfg = dataclasses.replace(archive.cfg, lock={"log": "indefinite", "snapshots": None, "summaries": None})
+    assert "Keine Bucket-Sperre gesetzt" not in await text(c, "/overview")
+
+
+async def test_export_reads_past_the_cache_and_needs_the_guard(tmp_path, aiohttp_client):
+    archive, _ = seeded(tmp_path)
+    c = await aiohttp_client(Web(archive, Cache(tmp_path / "cache"), allowed_peers=set()).app())
+    assert (await c.get(f"/export/{DAY}.zip")).status == 200
+    # Nothing of the export went into the page's cache, and no temporary file is left
+    assert not list((tmp_path / "cache").iterdir())
+    assert not list(tmp_path.glob(".export-*"))
+    # Not enough reads left for the whole export: none at all
+    archive.guard.update(Usage(0, LIMITS["class_b"] - 1, 0), asyncio.get_running_loop().time(), (2026, 11))
+    assert (await c.get(f"/export/{DAY}.zip")).status == 503
+
+
+def test_cache_counts_its_size(tmp_path):
+    cache = Cache(tmp_path / "c", max_bytes=10)
+    cache.put("a", b"12345")
+    cache.put("a", b"123")             # replaced, not added
+    cache.put("b", b"1234567")
+    assert cache.get("a") == b"123" and cache.get("b") == b"1234567"
+    cache.put("c", b"12")
+    assert sum(p.stat().st_size for p in (tmp_path / "c").iterdir()) <= 10
+    assert Cache(tmp_path / "c", max_bytes=10)._total == cache._total

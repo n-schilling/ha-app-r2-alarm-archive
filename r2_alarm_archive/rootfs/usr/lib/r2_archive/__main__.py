@@ -40,15 +40,33 @@ def payload(value: object) -> str:
     return str(value)
 
 
+async def find_broker(cfg: cfg_module.Config, lookup=cfg_module.supervisor_mqtt) -> dict:
+    """The broker from the options, else the one the Supervisor knows. Without
+    one it asks again and again: the archive works on meanwhile, only its
+    status does not reach Home Assistant."""
+    if cfg.mqtt:
+        return cfg.mqtt
+    failures = 0
+    while True:
+        try:
+            return await asyncio.to_thread(lookup)
+        except cfg_module.BrokerUnavailable as err:
+            if not failures:
+                LOGGER.warning("%s; archiving goes on, the status entities wait for a broker", err)
+            await asyncio.sleep(BACKOFF[min(failures, len(BACKOFF) - 1)])
+            failures += 1
+
+
 async def mqtt_loop(cfg: cfg_module.Config, archive: Archive, ctx: d.Context, slug: str) -> None:
     will = aiomqtt.Will(d.AVAILABILITY, "offline", qos=1, retain=True)
     failures = 0
     while True:
+        broker = await find_broker(cfg)
         try:
-            async with aiomqtt.Client(cfg.mqtt_host, cfg.mqtt_port, username=cfg.mqtt_username,
-                                      password=cfg.mqtt_password, will=will,
+            async with aiomqtt.Client(broker["host"], broker["port"], username=broker["username"],
+                                      password=broker["password"], will=will,
                                       identifier=f"{slug}-archive") as mqtt:
-                LOGGER.info("Connected to MQTT %s:%d", cfg.mqtt_host, cfg.mqtt_port)
+                LOGGER.info("Connected to MQTT %s:%d", broker["host"], broker["port"])
                 failures = 0
                 await mqtt.publish(d.device_topic(cfg.discovery_prefix),
                                    json.dumps(d.device_payload(ctx)), qos=1, retain=True)
@@ -86,8 +104,9 @@ async def run(cfg: cfg_module.Config) -> None:
     if not token:
         raise cfg_module.ConfigError("no SUPERVISOR_TOKEN: the app needs homeassistant_api")
     slug = os.environ.get("HOSTNAME", "r2-alarm-archive").replace("-", "_")
-    ctx = d.Context(prefix=cfg.discovery_prefix, version=os.environ.get("APP_VERSION", "unknown"),
-                    config_url=f"homeassistant://hassio/addon/{slug}/info")
+    version = os.environ.get("APP_VERSION") or "unknown"
+    ctx = d.Context(prefix=cfg.discovery_prefix, version=version,
+                    config_url=f"homeassistant://config/app/{slug}/info")
     async with aiohttp.ClientSession() as http:
         cloudflare = Cloudflare(http, cfg.api_token, cfg.account_id, cfg.bucket, cfg.jurisdiction) \
             if cfg.api_token else None
@@ -107,7 +126,7 @@ async def run(cfg: cfg_module.Config) -> None:
             tasks.create_task(archive.rules_loop())
             tasks.create_task(archive.token_loop())
             tasks.create_task(archive.summary_loop())
-            tasks.create_task(Web(archive, Cache(DATA / "cache"), slug=slug).run())
+            tasks.create_task(Web(archive, Cache(DATA / "cache"), slug=slug, version=version).run())
 
 
 def main() -> None:

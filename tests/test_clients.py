@@ -217,3 +217,36 @@ async def test_stop_is_no_lost_connection(core):
     with pytest.raises(asyncio.CancelledError):
         await waiter
     await ha.close()
+
+
+async def test_send_on_a_broken_line_is_an_ha_error(core, monkeypatch):
+    """The line breaks between the check and the send: an HAError like any
+    lost connection (the loop connects again), not a crash of the app."""
+    _, ha, _, _ = core
+    await ha.connect()
+
+    async def broken(*args, **kwargs):
+        raise ConnectionResetError("Cannot write to closing transport")
+    monkeypatch.setattr(ha._ws, "send_json", broken)
+    with pytest.raises(HAError, match="closing transport"):
+        await ha.config()
+    with pytest.raises(HAError, match="closing transport"):
+        await anext(ha.snapshot_requests())
+    assert not ha._results and not ha._streams
+    await ha.close()
+
+
+async def test_panel_trigger_uses_the_trigger_key(core):
+    _, ha, _, _ = core
+    sent = []
+    await ha.connect()
+    original = ha._ws.send_json
+
+    async def spy(data, *args, **kwargs):
+        sent.append(data)
+        await original(data, *args, **kwargs)
+    ha._ws.send_json = spy
+    with pytest.raises(HAError):
+        await anext(ha.panel_changes("alarm_control_panel.home"))
+    assert sent[0]["trigger"] == {"trigger": "state", "entity_id": "alarm_control_panel.home"}
+    await ha.close()

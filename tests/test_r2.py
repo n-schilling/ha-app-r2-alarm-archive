@@ -151,3 +151,20 @@ async def test_unreachable():
         with pytest.raises(R2Error) as err:
             await client.put_once("k", b"v", "text/plain")
         assert err.value.unreachable
+
+
+async def test_unreadable_list_answer(aiohttp_server):
+    """A 200 without XML (cut off, an error page in between) is an R2 error,
+    which the callers retry, not a crash."""
+    async def gateway(request):
+        return web.Response(text="<html>gateway", content_type="text/html")
+    app = web.Application()
+    app.router.add_get("/{bucket}", gateway)
+    server = await aiohttp_server(app)
+    async with aiohttp.ClientSession() as http:
+        client = R2(http, "acc", "default", "bucket", ACCESS, "secret")
+        client._base = f"http://{server.host}:{server.port}"
+        client._host = f"{server.host}:{server.port}"
+        with pytest.raises(R2Error, match="unreadable answer") as err:
+            await client.list("protokoll/")
+    assert err.value.unreachable

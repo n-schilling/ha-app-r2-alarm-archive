@@ -1,4 +1,4 @@
-"""App options from /data/options.json and the MQTT broker of the Supervisor."""
+"""App options from /data/options.json, and the MQTT broker the Supervisor knows."""
 
 from __future__ import annotations
 
@@ -9,14 +9,14 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 
+from .archive import PANEL_STATES
+
 OPTIONS = Path("/data/options.json")
 ACCOUNT_ID = re.compile(r"^[0-9a-f]{32}$")
 BUCKET = re.compile(r"^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$")
 ENTITY_ID = re.compile(r"^[a-z0-9_]+\.[a-z0-9_]+$")
 # The three kinds of data, each under its own prefix in the bucket
 KINDS = ("log", "snapshots", "summaries")
-PANEL_STATES = ("armed_home", "armed_away", "armed_night", "armed_vacation",
-                "armed_custom_bypass", "arming", "pending", "triggered", "disarmed")
 
 
 class ConfigError(Exception):
@@ -44,27 +44,31 @@ class Config:
     r2_check_interval: int             # minutes between checks of the R2 connection
     retention: dict[str, int | None]   # kind -> days, None = unlimited
     lock: dict[str, int | str | None]  # kind -> days, "indefinite", None = off
-    mqtt_host: str
-    mqtt_port: int
-    mqtt_username: str | None
-    mqtt_password: str | None
+    # The broker from the options; None: ask the Supervisor (see supervisor_mqtt)
+    mqtt: dict | None
     discovery_prefix: str
     log_level: str
+
+
+class BrokerUnavailable(Exception):
+    """The Supervisor knows no MQTT broker (yet)."""
 
 
 def supervisor_mqtt() -> dict:
     """The broker the Supervisor knows, e.g. the Mosquitto broker app."""
     token = os.environ.get("SUPERVISOR_TOKEN")
     if not token:
-        raise ConfigError("no MQTT broker set and no Supervisor to ask for one")
+        raise BrokerUnavailable("no MQTT broker set and no Supervisor to ask for one")
     req = urllib.request.Request("http://supervisor/services/mqtt",
                                  headers={"Authorization": f"Bearer {token}"})
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
-            return json.load(resp)["data"]
+            data = json.load(resp)["data"]
     except (OSError, ValueError, KeyError) as err:
-        raise ConfigError(f"no MQTT broker available from the Supervisor ({err}); "
-                          "install the Mosquitto broker app or set mqtt_host") from err
+        raise BrokerUnavailable(f"no MQTT broker available from the Supervisor ({err}); "
+                                "install the Mosquitto broker app or set mqtt_host") from err
+    return {"host": data["host"], "port": int(data.get("port") or 1883),
+            "username": data.get("username") or None, "password": data.get("password") or None}
 
 
 def _days(name: str, raw: str, words: dict[str, int | str | None]) -> int | str | None:
@@ -93,7 +97,7 @@ def _number(name: str, raw: object, low: int, high: int) -> int:
     return value
 
 
-def load(path: Path = OPTIONS, mqtt_service=supervisor_mqtt) -> Config:
+def load(path: Path = OPTIONS) -> Config:
     try:
         opts = json.loads(path.read_text())
     except (OSError, ValueError) as err:
@@ -146,12 +150,11 @@ def load(path: Path = OPTIONS, mqtt_service=supervisor_mqtt) -> Config:
         raise ConfigError("free_tier_guard needs api_token (Account Analytics Read and "
                           "Workers R2 Storage Read); or turn the guard off")
 
+    mqtt = None
     if opts.get("mqtt_host"):
-        mqtt = {"host": opts["mqtt_host"], "port": opts.get("mqtt_port") or 1883,
+        mqtt = {"host": str(opts["mqtt_host"]), "port": int(opts.get("mqtt_port") or 1883),
                 "username": opts.get("mqtt_username") or None,
                 "password": opts.get("mqtt_password") or None}
-    else:
-        mqtt = mqtt_service()
 
     return Config(
         account_id=account_id,
@@ -173,10 +176,7 @@ def load(path: Path = OPTIONS, mqtt_service=supervisor_mqtt) -> Config:
         r2_check_interval=r2_check_interval,
         retention=retention,
         lock=lock,
-        mqtt_host=mqtt["host"],
-        mqtt_port=int(mqtt.get("port") or 1883),
-        mqtt_username=mqtt.get("username") or None,
-        mqtt_password=mqtt.get("password") or None,
+        mqtt=mqtt,
         discovery_prefix=opts.get("discovery_prefix") or "homeassistant",
         log_level=str(opts.get("log_level") or "info").upper(),
     )

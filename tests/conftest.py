@@ -37,7 +37,7 @@ def options(**extra):
 def make_config(tmp_path, **extra):
     path = tmp_path / "options.json"
     path.write_text(json.dumps(options(**extra)))
-    return cfg_module.load(path, mqtt_service=lambda: {"host": "broker"})
+    return cfg_module.load(path)
 
 
 class FakeR2:

@@ -10,6 +10,7 @@ from __future__ import annotations
 import gzip
 import hashlib
 import json
+import re
 from datetime import UTC, date, datetime
 from zoneinfo import ZoneInfo
 
@@ -19,6 +20,18 @@ DAY_SECONDS = 86400
 # Folder state of a snapshot an automation asked for, and the longest reason kept
 REQUEST = "request"
 REASON_MAX = 200
+PANEL_STATES = ("armed_home", "armed_away", "armed_night", "armed_vacation", "armed_custom_bypass",
+                "arming", "pending", "triggered", "disarmed")
+# Attributes that hold access tokens (cameras, media players); they stay out of the archive
+SECRET_ATTRIBUTES = ("access_token", "entity_picture")
+
+# The keys the app writes, and nothing else: a key read back from the bucket
+# reaches the web page and the ZIP export only when it has this form
+_DAY = r"(?P<y>\d{4})/(?P<m>\d{2})/(?P<d>\d{2})/"
+_STAMP = r"\d{8}T\d{6}\.\d{6}Z"
+LOG_KEY = re.compile(rf"^protokoll/{_DAY}{_STAMP}_[0-9a-f]{{8}}\.json$")
+SNAPSHOT_FOLDER = re.compile(rf"^snapshots/{_DAY}{_STAMP}_(?:{'|'.join((*PANEL_STATES, REQUEST))})$")
+SNAPSHOT_FILE = re.compile(r"^(?:meta\.json|zustand\.json\.gz|kamera_[a-z0-9_]+\.jpg)$")
 
 
 def utc(ts: float) -> datetime:
@@ -86,6 +99,35 @@ def camera_file(entity_id: str, number: int = 1) -> str:
     """The picture of a camera; further pictures of a series get _2, _3, ..."""
     suffix = "" if number == 1 else f"_{number}"
     return f"kamera_{entity_id.split('.', 1)[1]}{suffix}.jpg"
+
+
+def without_secrets(attributes: dict) -> dict:
+    """Attributes without access tokens."""
+    return {k: v for k, v in attributes.items() if k not in SECRET_ATTRIBUTES}
+
+
+def valid_folder(folder: str) -> bool:
+    """A snapshot folder (without the trailing /) as the app names it."""
+    match = SNAPSHOT_FOLDER.match(folder)
+    return bool(match) and _real_day(match)
+
+
+def valid_key(key: str) -> bool:
+    """A log or snapshot key as the app writes it, or a summary key."""
+    if match := LOG_KEY.match(key):
+        return _real_day(match)
+    if key.startswith(PREFIX["snapshots"]):
+        folder, _, name = key.rpartition("/")
+        return valid_folder(folder) and bool(SNAPSHOT_FILE.match(name))
+    return summary_part(key) is not None
+
+
+def _real_day(match: re.Match) -> bool:
+    try:
+        date(int(match["y"]), int(match["m"]), int(match["d"]))
+    except ValueError:
+        return False
+    return True
 
 
 def key_day(key: str) -> str | None:

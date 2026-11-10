@@ -162,7 +162,11 @@ class R2:
             status, data = await self._request("GET", query=query)
             if status != 200:
                 self._raise("LIST", prefix, status, data)
-            root = ET.fromstring(data)
+            try:
+                root = ET.fromstring(data)
+            except ET.ParseError as err:
+                # Status 200 with a cut-off answer or an error page in between: as unreachable
+                raise R2Error(f"LIST {prefix}: unreadable answer ({err})") from err
             keys += [el.findtext(f"{S3_NS}Key") or "" for el in root.iter(f"{S3_NS}Contents")]
             if root.findtext(f"{S3_NS}IsTruncated") != "true":
                 return keys

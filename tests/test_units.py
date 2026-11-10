@@ -10,6 +10,7 @@ from conftest import BERLIN, make_config, options, unzip
 from r2_archive import archive as a
 from r2_archive import config as cfg_module
 from r2_archive import discovery as d
+from r2_archive import guard as guard_module
 from r2_archive.cloudflare import Usage, parse_usage
 from r2_archive.guard import LIMITS, Guard
 from r2_archive.store import Queue, State
@@ -21,7 +22,8 @@ MONTH = (2026, 10)
 def test_options(cfg):
     assert cfg.retention == {"log": None, "snapshots": 365, "summaries": None}
     assert cfg.lock == {"log": None, "snapshots": None, "summaries": None}
-    assert cfg.mqtt_host == "localhost" and cfg.free_tier_guard
+    assert cfg.mqtt == {"host": "localhost", "port": 1883, "username": None, "password": None}
+    assert cfg.free_tier_guard
 
 
 @pytest.mark.parametrize("extra, message", [
@@ -50,10 +52,27 @@ def test_guard_off_needs_no_token(tmp_path):
 def test_options_not_readable(tmp_path):
     with pytest.raises(cfg_module.ConfigError, match="not readable"):
         cfg_module.load(tmp_path / "missing.json")
+
+
+async def test_broker_from_the_supervisor_later(tmp_path, monkeypatch):
+    """Without mqtt_host the options load anyway; the broker is asked for
+    until the Supervisor knows one, archiving does not wait for it."""
+    from r2_archive import __main__ as main
+    monkeypatch.setattr(main, "BACKOFF", (0,))
     path = tmp_path / "o.json"
     path.write_text(json.dumps({**options(), "mqtt_host": ""}))
-    assert cfg_module.load(path, mqtt_service=lambda: {"host": "core-mosquitto", "port": 1883}).mqtt_host \
-        == "core-mosquitto"
+    cfg = cfg_module.load(path)
+    assert cfg.mqtt is None
+    answers = [cfg_module.BrokerUnavailable("no broker"), {"host": "core-mosquitto", "port": 1883,
+                                                          "username": "u", "password": "p"}]
+
+    def lookup():
+        answer = answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+    assert (await main.find_broker(cfg, lookup))["host"] == "core-mosquitto" and not answers
 
 
 # --- Guard ----------------------------------------------------------------------
@@ -294,3 +313,85 @@ def test_key_parts():
 def test_series_options(tmp_path, extra, message):
     with pytest.raises(cfg_module.ConfigError, match=message):
         make_config(tmp_path, **extra)
+
+
+# --- Review fixes -----------------------------------------------------------------
+LOG_KEY = "protokoll/2026/10/31/20261031T101733.000000Z_0123abcd.json"
+SNAP = "snapshots/2026/10/31/20261031T101733.000000Z_triggered"
+
+
+@pytest.mark.parametrize("key, valid", [
+    (LOG_KEY, True),
+    (f"{SNAP}/meta.json", True),
+    (f"{SNAP}/zustand.json.gz", True),
+    (f"{SNAP}/kamera_front_door_2.jpg", True),
+    ("snapshots/2026/10/31/20261031T101733.000000Z_request/meta.json", True),
+    ("zusammenfassung/2026/10/2026-10-31-nachtrag-2.txt", True),
+    # What a bucket can hold beside the app's own keys
+    ('snapshots/2026/10/31/20261031T000000.000000Z_x"><svg onload=alert(1)>/meta.json', False),
+    ("snapshots/2026/10/31/../../../../etc/meta.json", False),
+    ("snapshots/2026/10/31/20261031T101733.000000Z_triggered/../x/meta.json", False),
+    (f"{SNAP}/notes.txt", False),
+    (f"{SNAP}/kamera_Front.jpg", False),
+    ("protokoll/2026/02/30/20260230T101733.000000Z_0123abcd.json", False),
+    ("protokoll/2026/10/31/a.json", False),
+    ("zusammenfassung/2026/10/2026-10-31-nachtrag-+1.txt", False),
+    ("altbestand/history.txt", False),
+])
+def test_valid_key(key, valid):
+    assert a.valid_key(key) is valid
+
+
+def test_snapshot_keeps_no_access_tokens():
+    attrs = {"friendly_name": "Front", "access_token": "secret", "entity_picture": "/api/camera_proxy/x?token=t"}
+    assert a.without_secrets(attrs) == {"friendly_name": "Front"}
+
+
+def test_guard_keeps_own_operations_until_the_analytics_show_them():
+    guard = Guard(enabled=True)
+    guard.update(Usage(0, 0, 0), now=1000, month=MONTH)
+    guard.count(class_a=100, storage=5000, now=1000)       # just before the poll
+    guard.count(class_a=1, now=100)                         # long before it
+    # The next figure lags: the recent uploads still count, the old ones are in it
+    guard.update(Usage(1, 0, 0), now=1200, month=MONTH)
+    assert guard.own == {"class_a": 100, "class_b": 0, "storage": 5000}
+    assert guard.totals()["class_a"] == 101
+    guard.update(Usage(101, 0, 5000), now=1000 + guard_module.LAG + 1, month=MONTH)
+    assert guard.own == {"class_a": 0, "class_b": 0, "storage": 0}
+    # A new month starts from zero
+    guard.count(class_a=5, now=2000)
+    guard.update(Usage(0, 0, 0), now=2001, month=(2026, 11))
+    assert guard.own["class_a"] == 0
+
+
+def test_queue_entry_without_body_is_set_aside(tmp_path):
+    kept = tmp_path / "kept"
+    queue = Queue(tmp_path / "q", kept)
+    queue.add("k1", "log", "2026-10-31", b"one", "application/json")
+    queue.add("k2", "log", "2026-10-31", b"two", "application/json")
+    (tmp_path / "q" / "0000000001.bin").unlink()
+    again = Queue(tmp_path / "q", kept)
+    assert [i.key for i in again.items()] == ["k2"]
+    assert [q.name for q in again.quarantined()] == ["0000000001.json"]
+    # Gone while the app runs: set aside on the way to R2
+    item = again.items()[0]
+    (tmp_path / "q" / "0000000002.bin").unlink()
+    with pytest.raises(OSError):
+        again.body(item)
+    again.set_aside(item, FileNotFoundError("gone"))
+    assert len(again) == 0 and "k2" not in again
+    assert [q.name for q in again.quarantined()] == ["0000000001.json", "0000000002.json"]
+
+
+def test_state_index(tmp_path):
+    state = State(tmp_path / "s.json")
+    state.uploaded("2026-10-31", "a")
+    assert state.has("2026-10-31", "a") and not state.has("2026-10-31", "b")
+    assert not state.summary_complete("2026-10-31")
+    state.set_summary("2026-10-31", ["a"], 1)
+    assert state.summary_complete("2026-10-31")
+    state.uploaded("2026-10-31", "b")
+    assert not state.summary_complete("2026-10-31")
+    state.save()
+    again = State(tmp_path / "s.json")
+    assert again.has("2026-10-31", "b") and again.data["uploaded"]["2026-10-31"] == ["a", "b"]

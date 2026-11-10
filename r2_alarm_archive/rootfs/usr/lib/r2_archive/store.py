@@ -68,6 +68,8 @@ class Queue:
             try:
                 raw = json.loads(meta.read_text())
                 item = Item(seq=int(meta.stem), **raw)
+                if not meta.with_suffix(".bin").is_file():
+                    raise FileNotFoundError("its body file is missing")
             except (OSError, ValueError, TypeError) as err:
                 # Never drop queued data: set it aside for a look by hand
                 self._quarantine(meta, err)
@@ -86,6 +88,12 @@ class Queue:
                 path.unlink()
                 os.utime(folder / path.name)
         LOGGER.error("Queued object %s is unreadable (%s); moved to %s", meta.stem, err, folder)
+
+    def set_aside(self, item: Item, err: Exception) -> None:
+        """Moves a queued object whose body cannot be read to the quarantine."""
+        self._quarantine(self._folder / f"{item.seq:010d}.json", err)
+        self._items.pop(item.seq, None)
+        self._keys.discard(item.key)
 
     def quarantined(self) -> list[Quarantined]:
         """What lies in the quarantine; gone once the user deletes it."""
@@ -142,7 +150,8 @@ class Queue:
 
 
 class State:
-    """JSON state with a few known fields; saved on every change."""
+    """JSON state with a few known fields, saved by save(). Which keys are
+    uploaded per day is also kept as sets, for quick lookups."""
 
     def __init__(self, path: Path) -> None:
         self._path = path
@@ -158,11 +167,33 @@ class State:
         self.data.setdefault("last_upload", None)
         self.data.setdefault("last_summary", None)
         self.data.setdefault("storage_days", {})      # UTC date -> [account bytes, bucket bytes]
+        self._sets = {day: set(keys) for day, keys in self.data["uploaded"].items()}
+        # Days whose summary covers every uploaded key
+        self._complete: set[str] = set()
 
     def save(self) -> None:
         write_atomic(self._path, json.dumps(self.data, separators=(",", ":")).encode())
 
     def uploaded(self, day: str, key: str) -> None:
-        keys = self.data["uploaded"].setdefault(day, [])
+        keys = self._sets.setdefault(day, set())
         if key not in keys:
-            keys.append(key)
+            keys.add(key)
+            self.data["uploaded"].setdefault(day, []).append(key)
+            self._complete.discard(day)
+
+    def has(self, day: str, key: str) -> bool:
+        return key in self._sets.get(day, ())
+
+    def set_summary(self, day: str, covered: list[str], files: int) -> None:
+        self.data["summaries"][day] = {"covered": covered, "files": files}
+        self._complete.discard(day)
+
+    def summary_complete(self, day: str) -> bool:
+        """Whether the day has a summary that covers every uploaded key."""
+        if day in self._complete:
+            return True
+        done = self.data["summaries"].get(day)
+        if done is None or not self._sets.get(day, set()) <= set(done["covered"]):
+            return False
+        self._complete.add(day)
+        return True

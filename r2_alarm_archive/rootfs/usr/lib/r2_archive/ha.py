@@ -135,13 +135,22 @@ class HA:
         msg_id = next(self._ids)
         future = asyncio.get_running_loop().create_future()
         self._results[msg_id] = future
-        await self._ws.send_json({"id": msg_id, **message})
         try:
+            await self._send(msg_id, message)
             async with asyncio.timeout(timeout):
                 return await future
         except TimeoutError as err:
-            self._results.pop(msg_id, None)
             raise HAError(f"{message.get('type')}: no answer in {timeout:.0f} s") from err
+        finally:
+            self._results.pop(msg_id, None)
+
+    async def _send(self, msg_id: int, message: dict[str, Any]) -> None:
+        """Sends a message; a connection that breaks meanwhile is an HAError
+        like any other lost connection."""
+        try:
+            await self._ws.send_json({"id": msg_id, **message})
+        except (aiohttp.ClientError, ConnectionError, RuntimeError) as err:
+            raise HAError(f"websocket: {err or type(err).__name__}") from err
 
     async def subscribe(self, message: dict[str, Any]) -> AsyncIterator[dict]:
         """Events of a subscription until the websocket closes (then HAError)."""
@@ -152,15 +161,16 @@ class HA:
         self._streams[msg_id] = queue
         future = asyncio.get_running_loop().create_future()
         self._results[msg_id] = future
-        await self._ws.send_json({"id": msg_id, **message})
-        await future
         try:
+            await self._send(msg_id, message)
+            await future
             while True:
                 event = await queue.get()
                 if event is None:
                     raise self._lost or HAError("websocket closed")
                 yield event
         finally:
+            self._results.pop(msg_id, None)
             self._streams.pop(msg_id, None)
 
     # --- Requests ---------------------------------------------------------------
@@ -178,7 +188,7 @@ class HA:
 
     def panel_changes(self, entity_id: str) -> AsyncIterator[dict]:
         return self.subscribe({"type": "subscribe_trigger",
-                               "trigger": {"platform": "state", "entity_id": entity_id}})
+                               "trigger": {"trigger": "state", "entity_id": entity_id}})
 
     def snapshot_requests(self) -> AsyncIterator[dict]:
         """Events of type r2_alarm_archive_snapshot as they are fired; those
