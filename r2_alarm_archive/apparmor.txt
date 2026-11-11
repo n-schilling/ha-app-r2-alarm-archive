@@ -4,8 +4,7 @@ abi <abi/3.0>,
 # Talks to Home Assistant, Cloudflare and the MQTT broker; writes its queue,
 # state and cache to /data and quarantined objects to its folder in
 # /addon_configs. s6-overlay runs as root and hands both to user r2archive,
-# as which the archive runs. Measured on Home Assistant OS in complain mode
-# before it enforced.
+# as which the archive runs. Tested on a real installation.
 profile r2_alarm_archive flags=(attach_disconnected,mediate_deleted) {
   #include <abstractions/base>
 

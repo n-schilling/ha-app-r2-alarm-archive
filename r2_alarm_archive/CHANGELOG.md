@@ -7,7 +7,7 @@ All notable changes to this app are documented here. The format follows [Keep a 
 ### Security
 
 - The archive no longer runs as root, but as a user of its own, to which the app hands its data folder and its folder in `/addon_configs` on start
-- A narrower AppArmor profile: only the capabilities, networks, programs and paths the app uses, measured on Home Assistant OS before it was enforced
+- A narrower AppArmor profile: only the capabilities, networks, programs and paths the app uses, tested on a real installation
 
 ## [1.1.0] - 2026-11-10
 
