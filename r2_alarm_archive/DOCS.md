@@ -30,6 +30,7 @@ sequenceDiagram
   1. An R2 bucket for this archive only, storage class **Standard**.
   2. An R2 API token (**R2 → Manage API tokens**) with **Object Read & Write**, limited to this bucket. Its access key ID and secret go into the options. This key can also delete objects; see [Retention and bucket lock](#retention-and-bucket-lock).
   3. For the free tier guard (and the log line about the bucket's rules): an account API token (**My Profile → API Tokens**, or account API tokens) with **Account Analytics Read** and **Workers R2 Storage Read**. Both permissions only read.
+- The app needs the Home Assistant API (`homeassistant_api`) to read the log and the states for snapshots and the camera pictures. The archive runs as a user of its own; only the start, which hands it the data folder and the app's folder in `/addon_configs`, runs as root. An AppArmor profile allows only the capabilities, networks, programs and paths the app uses.
 - Recommended: turn on **Watchdog** on the app's page (**Settings → Apps → R2 Alarm Archive**), so Home Assistant starts the app again should it ever stop.
 
 ## Options
