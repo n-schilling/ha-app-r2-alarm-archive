@@ -44,6 +44,7 @@ profile r2_alarm_archive flags=(attach_disconnected,mediate_deleted) {
   /usr/bin/** rix,
   /usr/sbin/** rix,
   /usr/local/bin/** rix,
+  /usr/lib/ r,
   /usr/lib/** rm,
   /usr/lib/bashio/bashio rix,
   /usr/local/lib/** rm,
@@ -56,7 +57,7 @@ profile r2_alarm_archive flags=(attach_disconnected,mediate_deleted) {
   /tmp/** rwk,
 
   # Options, queue, state, cache; the quarantine
-  /data/ r,
+  /data/ rw,
   /data/** rwk,
   /config/ rw,
   /config/** rwk,
