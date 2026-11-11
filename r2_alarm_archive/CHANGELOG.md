@@ -7,13 +7,13 @@ All notable changes to this app are documented here. The format follows [Keep a 
 ### Added
 
 - The web page shows the app and its version at the bottom of every page
-- The bucket rules on the overview say when no bucket lock is set: the app's access key can then delete what is archived
 - `scripts/check.sh` runs the CI checks locally; `scripts/screenshots.py` makes the screenshots with made-up data
 
 ### Changed
 
+- The bucket's lifecycle and lock rules are the Cloudflare account's business, not the app's: the app no longer checks them against options, and logs what it finds as one INFO line (with `api_token`). The options `retention_*` and `lock_*`, the entity *Bucket rules differ* and the bucket rules on the overview are gone; Home Assistant removes the entity by itself
 - The web page uses the stylesheet shared by these apps, with Home Assistant 2026.11's look: colors, cards, top bar, alerts
-- Requires Home Assistant 2026.11 or later; the base image is pinned (`base-python:3.14-alpine3.24-2026.11.0`) and Dependabot proposes new ones
+- Requires Home Assistant 2026.11 or later; the base image is pinned by version and digest (`base-python:3.14-alpine3.24-2026.11.0`) and Dependabot proposes new ones
 - The image installs its Python packages only with the hashes pinned in `requirements.txt` (made from `requirements.in` with `uv pip compile`), so a build gets exactly the files reviewed
 - Snapshots no longer keep access tokens (`access_token`, `entity_picture`) in the attributes of the states and the panel
 - The camera pictures of a snapshot are taken at the same time; a series keeps its interval however long a picture takes

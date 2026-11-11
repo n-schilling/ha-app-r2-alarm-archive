@@ -1,4 +1,4 @@
-"""Options, the free tier guard, keys and summaries, the bucket rules and the
+"""Options, the free tier guard, keys and summaries, the bucket rules' log line and the
 queue in /data."""
 
 import json
@@ -20,8 +20,6 @@ MONTH = (2026, 10)
 
 # --- Options --------------------------------------------------------------------
 def test_options(cfg):
-    assert cfg.retention == {"log": None, "snapshots": 365, "summaries": None}
-    assert cfg.lock == {"log": None, "snapshots": None, "summaries": None}
     assert cfg.mqtt == {"host": "localhost", "port": 1883, "username": None, "password": None}
     assert cfg.free_tier_guard
 
@@ -33,9 +31,6 @@ def test_options(cfg):
     ({"log_entity": "Alarm Protokoll"}, "no entity ID"),
     ({"alarm_panel": "sensor.x"}, "alarm_control_panel"),
     ({"cameras": ["image.x"]}, "no camera entity"),
-    ({"retention_log": "forever"}, "retention_log must be"),
-    ({"lock_log": "7", "retention_log": "3"}, "lock would win"),
-    ({"lock_snapshots": "indefinite"}, "lock would win"),
     ({"camera_states": ["armed_home"]}, "not in snapshot_states"),
     ({"api_token": ""}, "free_tier_guard needs api_token"),
 ])
@@ -199,41 +194,11 @@ def lock(prefix, days=None):
     return {"id": f"lock-{prefix}", "enabled": True, "prefix": prefix, "condition": condition}
 
 
-RETENTION = {"log": None, "snapshots": 365, "summaries": None}
-NO_LOCK = {"log": None, "snapshots": None, "summaries": None}
-
-
-def test_rules_match():
-    assert a.rule_problems([lifecycle("snapshots/", 365)], [], RETENTION, NO_LOCK) == []
-    assert a.rule_problems([lifecycle("snapshots/", 365)], [lock("protokoll/")], RETENTION,
-                           {**NO_LOCK, "log": "indefinite"}) == []
-    assert a.rule_problems([lifecycle("snapshots/", 365), lifecycle("protokoll/", 1, enabled=False)],
-                           [lock("snapshots/", 30)], RETENTION, {**NO_LOCK, "snapshots": 30}) == []
-
-
-def test_rules_differ():
-    missing = a.rule_problems([], [], RETENTION, NO_LOCK)
-    assert len(missing) == 1 and missing[0].startswith("snapshots/: retention 365 days")
-    # A rule without prefix covers every kind
-    everything = a.rule_problems([lifecycle("", 365)], [], RETENTION, NO_LOCK)
-    assert [p.split(":")[0] for p in everything] == ["protokoll/", "zusammenfassung/"]
-    wrong_lock = a.rule_problems([lifecycle("snapshots/", 365)], [lock("", 7)], RETENTION, NO_LOCK)
-    assert len(wrong_lock) == 3
-    assert a.rule_problems([lifecycle("snapshots/", 365)], [lock("protokoll/", 7)], RETENTION,
-                           {**NO_LOCK, "log": "indefinite"})[0].startswith("protokoll/: lock indefinite")
-
-
-def test_rule_commands_name_the_jurisdiction():
-    assert a.rule_commands("b", RETENTION, NO_LOCK, "eu") == [
-        "npx wrangler r2 bucket lifecycle add b delete-snapshots snapshots/ --expire-days 365 --jurisdiction eu"]
-
-
-def test_rule_commands():
-    assert a.rule_commands("b", RETENTION, {**NO_LOCK, "log": "indefinite", "snapshots": 30}) == [
-        "npx wrangler r2 bucket lock add b lock-log protokoll/ --retention-indefinite",
-        "npx wrangler r2 bucket lifecycle add b delete-snapshots snapshots/ --expire-days 365",
-        "npx wrangler r2 bucket lock add b lock-snapshots snapshots/ --retention-days 30",
-    ]
+def test_describe_rules():
+    assert a.describe_rules([], []) == "lifecycle deletes nothing; lock holds nothing"
+    assert a.describe_rules([lifecycle("snapshots/", 365), lifecycle("protokoll/", 1, enabled=False)],
+                            [lock("protokoll/"), lock("", 30)]) == (
+        "lifecycle deletes snapshots/ after 365 days; lock holds protokoll/ indefinitely, whole bucket 30 days")
 
 
 # --- Queue and state ---------------------------------------------------------------
@@ -275,6 +240,8 @@ def test_discovery():
     comps = payload["components"]
     assert set(comps) == {"archiving", "r2_connection", "queue", "last_upload", "last_summary", "free_tier_usage",
                           "free_tier_limit", "bucket_rules", "token_expiring"}
+    # The removed entity goes with its platform only, so Home Assistant deletes it
+    assert comps.pop("bucket_rules") == {"platform": "binary_sensor"}
     assert all(c["unique_id"].startswith("r2_alarm_archive_") for c in comps.values())
     assert comps["r2_connection"]["device_class"] == "connectivity"
     assert comps["archiving"]["device_class"] == "running"

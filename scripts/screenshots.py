@@ -90,7 +90,6 @@ def demo(folder: Path, shots: dict[str, bytes]) -> Archive:
     archive = Archive(cfg, ha, r2, FakeCloudflare(), Queue(folder / "queue"), State(folder / "state.json"),
                       lambda: NOW)
     archive.tz, archive.language, archive.ha_connected, archive.r2_connected = BERLIN, "en", True, True
-    archive.rule_problems = []
     archive.token_checked = True
     archive.guard.update(Usage(1_874, 9_310, 412_000_000, 1_204, 6_877, 96_400_000),
                          asyncio.get_running_loop().time(), (2026, 11))

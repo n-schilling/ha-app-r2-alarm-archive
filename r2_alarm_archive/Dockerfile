@@ -1,5 +1,6 @@
-# A fixed tag, so every build starts from the same image; Dependabot proposes new ones
-FROM ghcr.io/home-assistant/base-python:3.14-alpine3.24-2026.11.0
+# Pinned by version and digest, so a moved tag cannot change the image unnoticed;
+# Dependabot proposes updates
+FROM ghcr.io/home-assistant/base-python:3.14-alpine3.24-2026.11.0@sha256:aafc599627b1ea2c25c154cbd44867fefe024c12c38a2a355d5e8a4d1b6a7bdd
 
 SHELL ["/bin/ash", "-o", "pipefail", "-c"]
 

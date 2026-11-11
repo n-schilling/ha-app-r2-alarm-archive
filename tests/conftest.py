@@ -27,9 +27,7 @@ def options(**extra):
             "alarm_panel": "alarm_control_panel.home",
             "snapshot_states": ["armed_away", "armed_night", "triggered", "disarmed"],
             "snapshot_entities": ["binary_sensor.doors_and_windows"], "snapshot_all_entities": False,
-            "cameras": ["camera.front"], "camera_states": ["armed_night", "triggered"], "retention_log": "unlimited", "retention_snapshots": "365",
-            "retention_summaries": "unlimited", "lock_log": "off", "lock_snapshots": "off",
-            "lock_summaries": "off", "mqtt_host": "localhost"}
+            "cameras": ["camera.front"], "camera_states": ["armed_night", "triggered"], "mqtt_host": "localhost"}
     opts.update(extra)
     return opts
 

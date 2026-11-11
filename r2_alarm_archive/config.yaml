@@ -43,12 +43,6 @@ options:
   camera_pictures: 3
   camera_interval: 10
   r2_check_interval: 15
-  retention_log: unlimited
-  retention_snapshots: "365"
-  retention_summaries: unlimited
-  lock_log: "off"
-  lock_snapshots: "off"
-  lock_summaries: "off"
   discovery_prefix: homeassistant
   log_level: info
 schema:
@@ -73,12 +67,6 @@ schema:
   camera_pictures: int(1,10)
   camera_interval: int(1,60)
   r2_check_interval: int(1,1440)
-  retention_log: match(^(unlimited|[1-9][0-9]{0,4})$)
-  retention_snapshots: match(^(unlimited|[1-9][0-9]{0,4})$)
-  retention_summaries: match(^(unlimited|[1-9][0-9]{0,4})$)
-  lock_log: match(^(off|indefinite|[1-9][0-9]{0,4})$)
-  lock_snapshots: match(^(off|indefinite|[1-9][0-9]{0,4})$)
-  lock_summaries: match(^(off|indefinite|[1-9][0-9]{0,4})$)
   discovery_prefix: match(^[A-Za-z0-9_/-]+$)
   mqtt_host: str?
   mqtt_port: port?

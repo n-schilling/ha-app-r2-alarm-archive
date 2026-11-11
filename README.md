@@ -17,7 +17,7 @@ The page looks like Home Assistant's settings and takes over the theme in use. T
 
 <img src="docs/screenshots/menu.png" alt="Menu with Overview, Details, Queue and Settings" width="700">
 
-<img src="docs/screenshots/overview.png" alt="Overview: status, free tier usage of the account and the bucket, bucket rules" width="700">
+<img src="docs/screenshots/overview.png" alt="Overview: status and free tier usage of the account and the bucket" width="700">
 
 <img src="docs/screenshots/details.png" alt="Details: archived days as a table grouped by month" width="700">
 
@@ -50,12 +50,12 @@ flowchart LR
     guard --> bucket[("Cloudflare R2 bucket<br>protokoll/ snapshots/<br>zusammenfassung/")]
     bucket --> summary --> bucket
     bucket --> page
-    analytics["Cloudflare API<br>usage, bucket rules, token"] --> guard
+    analytics["Cloudflare API<br>usage, token"] --> guard
     app --> mqtt["MQTT entities:<br>Archiving, R2 connection,<br>Queue, Free tier …"]
     mqtt --> auto["Your automations"]
 ```
 
-How the log, snapshots, summaries, the free tier guard and the bucket rules work is in [the documentation](r2_alarm_archive/DOCS.md); changes are in the [changelog](r2_alarm_archive/CHANGELOG.md).
+How the log, snapshots, summaries and the free tier guard work is in [the documentation](r2_alarm_archive/DOCS.md); changes are in the [changelog](r2_alarm_archive/CHANGELOG.md).
 
 ## Installation
 

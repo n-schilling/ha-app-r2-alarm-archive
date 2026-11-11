@@ -55,7 +55,7 @@ TEXT = {
     "en": {
         "title": "Alarm archive", "overview": "Overview", "details": "Details", "queue": "Queue",
         "settings": "Settings", "back": "Back",
-        "overview_info": "Status, free tier usage and bucket rules",
+        "overview_info": "Status and free tier usage",
         "details_info": "Log, snapshots and summaries by month",
         "queue_info": "Objects waiting for their upload", "settings_info": "The app's options in Home Assistant",
         "status": "Status", "working": "Archiving works", "broken": "Archiving does not work",
@@ -67,8 +67,7 @@ TEXT = {
         "class_a": "Writes (Class A)", "class_b": "Reads (Class B)", "growth": "Storage growth",
         "per_day": "per day", "days_left": "Guard limit reached in", "days_unit": "days", "never": "not in sight",
         "no_figure": "No usage figure from Cloudflare yet.", "guard_off": "The free tier guard is off.",
-        "rules": "Bucket rules", "rules_ok": "Lifecycle and lock rules match the options.",
-        "rules_unknown": "Not checked (no api_token).", "day": "Day", "days": "days", "entries": "Entries",
+        "day": "Day", "days": "days", "entries": "Entries",
         "log": "Log", "snapshots": "Snapshots", "alarms": "Alarms", "summary": "Summary",
         "summaries": "Summaries", "none": "none", "time": "Time", "message": "Message",
         "pictures": "Pictures", "states": "States", "entity": "Entity", "state": "State",
@@ -85,13 +84,11 @@ TEXT = {
         "quarantine_info": "Queue entries the app could not read. They lie in {} (reachable e.g. with Samba or "
                            "an editor app); the problem goes once they are deleted.",
         "moved": "Set aside", "missing_files": "Missing files", "reason": "Reason",
-        "no_lock": "No bucket lock is set: the app's access key can delete what is archived. A lock "
-                   "rule per prefix prevents that (lock_log, lock_snapshots, lock_summaries).",
     },
     "de": {
         "title": "Alarm-Archiv", "overview": "Übersicht", "details": "Detailansicht", "queue": "Warteschlange",
         "settings": "Einstellungen", "back": "Zurück",
-        "overview_info": "Status, Free-Tier-Verbrauch und Bucket-Regeln",
+        "overview_info": "Status und Free-Tier-Verbrauch",
         "details_info": "Protokoll, Snapshots und Zusammenfassungen nach Monaten",
         "queue_info": "Objekte, die auf ihren Upload warten", "settings_info": "Optionen der App in Home Assistant",
         "status": "Status", "working": "Archivierung läuft", "broken": "Archivierung gestört",
@@ -104,9 +101,7 @@ TEXT = {
         "growth": "Speicherzuwachs", "per_day": "pro Tag", "days_left": "Wächter-Grenze erreicht in",
         "days_unit": "Tagen",
         "never": "nicht absehbar", "no_figure": "Noch keine Verbrauchszahl von Cloudflare.",
-        "guard_off": "Der Free-Tier-Wächter ist aus.", "rules": "Bucket-Regeln",
-        "rules_ok": "Lifecycle- und Lock-Regeln passen zu den Optionen.",
-        "rules_unknown": "Nicht geprüft (kein api_token).", "day": "Tag", "days": "Tage", "entries": "Einträge",
+        "guard_off": "Der Free-Tier-Wächter ist aus.", "day": "Tag", "days": "Tage", "entries": "Einträge",
         "log": "Protokoll", "snapshots": "Snapshots", "alarms": "Alarme", "summary": "Zusammenfassung",
         "summaries": "Zusammenfassungen", "none": "keine", "time": "Zeit", "message": "Meldung",
         "pictures": "Bilder", "states": "Zustände", "entity": "Entität",
@@ -125,8 +120,6 @@ TEXT = {
                            "(erreichbar z. B. über Samba oder eine Editor-App); die Meldung verschwindet, "
                            "sobald sie gelöscht sind.",
         "moved": "Beiseitegelegt", "missing_files": "Fehlende Dateien", "reason": "Grund",
-        "no_lock": "Keine Bucket-Sperre gesetzt: Der Zugriffsschlüssel der App kann Archiviertes löschen. "
-                   "Eine Lock-Regel je Präfix verhindert das (lock_log, lock_snapshots, lock_summaries).",
     },
 }
 
@@ -579,19 +572,6 @@ class Web:
             + (f"<tr><th>{self.t('token')}</th><td>{self.token_text()}</td></tr>" if archive.cloudflare else "")
             + "</table>"))
         body += self.card(self.t("free_tier"), self.free_tier())
-        if archive.rule_problems is None:
-            rules = f'<p class="muted">{self.t("rules_unknown")}</p>'
-        elif not archive.rule_problems:
-            rules = f'<div class="state ok">{icon("ok")}{self.t("rules_ok")}</div>'
-        else:
-            commands = a.rule_commands(archive.cfg.bucket, archive.cfg.retention, archive.cfg.lock,
-                                       archive.cfg.jurisdiction)
-            rules = ('<ul class="problems">' + "".join(f'<li class="bad">{html.escape(p)}</li>'
-                                                       for p in archive.rule_problems)
-                     + "</ul><pre>" + html.escape("\n".join(commands)) + "</pre>")
-        if all(lock is None for lock in archive.cfg.lock.values()):
-            rules += f'<p class="muted">{self.t("no_lock")}</p>'
-        body += self.card(self.t("rules"), rules)
         return self.page(request, self.t("overview"), body, back="/")
 
     def token_text(self) -> str:

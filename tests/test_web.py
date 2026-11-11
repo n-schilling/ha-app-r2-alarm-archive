@@ -2,7 +2,6 @@
 the guard, and that only the ingress proxy gets in."""
 
 import asyncio
-import dataclasses
 import gzip
 import json
 from datetime import UTC, datetime
@@ -32,7 +31,6 @@ def seeded(tmp_path, usage=USAGE):
     archive = Archive(cfg, FakeHA(), r2, FakeCloudflare(), Queue(tmp_path / "queue"),
                       State(tmp_path / "state.json"), Clock(datetime(2026, 11, 1, 9, 0, tzinfo=UTC)))
     archive.tz, archive.language, archive.ha_connected, archive.r2_connected = BERLIN, "de", True, True
-    archive.rule_problems = []
     archive.ha.state_list = [{"entity_id": "person.kim", "state": "home",
                               "attributes": {"user_id": "u1", "friendly_name": "Kim"}}]
     archive.guard.update(usage, asyncio.get_running_loop().time(), (2026, 11))
@@ -89,7 +87,6 @@ async def test_overview(client):
     page = await text(c, "/overview", {"X-Ingress-Path": "/api/hassio_ingress/abc"})
     assert "Archivierung läuft" in page and 'class="icon-button back" href="/api/hassio_ingress/abc/"' in page
     assert "1.234" in page and "900.000" in page and "7,0 MB" in page and "2,0 MB" in page and "0,12 %" in page
-    assert "Lifecycle- und Lock-Regeln passen" in page
     archive.language = "en"
     archive.r2_connected = False
     assert "R2 not reachable" in await text(c, "/overview")
@@ -377,11 +374,11 @@ async def test_snapshot_links_are_encoded(client):
     assert '/a&quot;b/file/' in page and '/a"b' not in page
 
 
-async def test_lock_hint(client):
-    c, archive, _ = client
-    assert "Keine Bucket-Sperre gesetzt" in await text(c, "/overview")
-    archive.cfg = dataclasses.replace(archive.cfg, lock={"log": "indefinite", "snapshots": None, "summaries": None})
-    assert "Keine Bucket-Sperre gesetzt" not in await text(c, "/overview")
+async def test_no_bucket_rules_on_the_page(client):
+    """The bucket's rules are the Cloudflare account's business: the page says nothing about them."""
+    c, _, _ = client
+    page = await text(c, "/overview")
+    assert "Bucket-Regeln" not in page and "Bucket-Sperre" not in page and "wrangler" not in page
 
 
 async def test_export_reads_past_the_cache_and_needs_the_guard(tmp_path, aiohttp_client):

@@ -1,5 +1,5 @@
 """What goes into the bucket and under which key: log entries, snapshots and
-daily summaries; and whether the bucket's rules match the options.
+daily summaries; and a line for the log about the bucket's own rules.
 
 Folders follow the local date, so they match the daily summary; times inside
 the objects are UTC.
@@ -205,56 +205,28 @@ def summary_text(day: str, entries: list[tuple[str, bytes]], snapshots: list[str
 
 
 # --- Bucket rules ---------------------------------------------------------------
-def _covers(rule_prefix: str, prefix: str) -> bool:
-    return prefix.startswith(rule_prefix or "")
+def describe_rules(lifecycle: list[dict], locks: list[dict]) -> str:
+    """The bucket's lifecycle and lock rules in one line for the log. The app does not
+    manage them (they belong to the Cloudflare account), so they are only described."""
+    def prefix(rule: dict, where: dict) -> str:
+        return where.get("prefix") or "whole bucket"
 
-
-def rule_problems(lifecycle: list[dict], locks: list[dict], retention: dict, lock: dict) -> list[str]:
-    """What differs between the bucket's rules and the options; empty if nothing."""
-    problems = []
-    for kind, prefix in PREFIX.items():
-        deletes = [r for r in lifecycle if r.get("enabled")
-                   and _covers((r.get("conditions") or {}).get("prefix", ""), prefix)
-                   and (r.get("deleteObjectsTransition") or {}).get("condition")]
-        want = retention[kind]
-        if want is None:
-            if deletes:
-                problems.append(f"{prefix}: retention unlimited, but lifecycle rule "
-                                f"{deletes[0].get('id')!r} deletes objects")
+    deletes = []
+    for rule in lifecycle:
+        age = ((rule.get("deleteObjectsTransition") or {}).get("condition") or {}).get("maxAge")
+        if rule.get("enabled") and age:
+            deletes.append(f"{prefix(rule, rule.get('conditions') or {})} after {age // DAY_SECONDS} days")
+    held = []
+    for rule in locks:
+        if not rule.get("enabled"):
+            continue
+        condition = rule.get("condition") or {}
+        if condition.get("type") == "Indefinite":
+            how = "indefinitely"
+        elif condition.get("type") == "Age":
+            how = f"{(condition.get('maxAgeSeconds') or 0) // DAY_SECONDS} days"
         else:
-            ages = [(r["deleteObjectsTransition"]["condition"] or {}).get("maxAge") for r in deletes]
-            if ages != [want * DAY_SECONDS]:
-                problems.append(f"{prefix}: retention {want} days needs exactly one lifecycle rule "
-                                f"deleting after {want * DAY_SECONDS} s, found {ages or 'none'}")
-        held = [r for r in locks if r.get("enabled") and _covers(r.get("prefix", ""), prefix)]
-        conditions = [r.get("condition") or {} for r in held]
-        want_lock = lock[kind]
-        if want_lock is None:
-            if held:
-                problems.append(f"{prefix}: lock off, but lock rule {held[0].get('id')!r} holds objects")
-        elif want_lock == "indefinite":
-            if [c.get("type") for c in conditions] != ["Indefinite"]:
-                problems.append(f"{prefix}: lock indefinite needs exactly one indefinite lock rule, "
-                                f"found {conditions or 'none'}")
-        elif [(c.get("type"), c.get("maxAgeSeconds")) for c in conditions] != \
-                [("Age", want_lock * DAY_SECONDS)]:
-            problems.append(f"{prefix}: lock {want_lock} days needs exactly one lock rule of "
-                            f"{want_lock * DAY_SECONDS} s, found {conditions or 'none'}")
-    return problems
-
-
-def rule_commands(bucket: str, retention: dict, lock: dict, jurisdiction: str = "default") -> list[str]:
-    """Wrangler commands that set the rules the options ask for."""
-    commands = []
-    where = "" if jurisdiction == "default" else f" --jurisdiction {jurisdiction}"
-    for kind, prefix in PREFIX.items():
-        if retention[kind] is not None:
-            commands.append(f"npx wrangler r2 bucket lifecycle add {bucket} delete-{kind} {prefix} "
-                            f"--expire-days {retention[kind]}{where}")
-        if lock[kind] == "indefinite":
-            commands.append(f"npx wrangler r2 bucket lock add {bucket} lock-{kind} {prefix} "
-                            f"--retention-indefinite{where}")
-        elif lock[kind] is not None:
-            commands.append(f"npx wrangler r2 bucket lock add {bucket} lock-{kind} {prefix} "
-                            f"--retention-days {lock[kind]}{where}")
-    return commands
+            how = str(condition.get("date") or condition.get("type"))
+        held.append(f"{prefix(rule, rule)} {how}")
+    return (f"lifecycle deletes {', '.join(deletes) if deletes else 'nothing'}; "
+            f"lock holds {', '.join(held) if held else 'nothing'}")

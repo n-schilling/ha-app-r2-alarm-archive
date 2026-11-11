@@ -71,6 +71,8 @@ async def mqtt_loop(cfg: cfg_module.Config, archive: Archive, ctx: d.Context, sl
                 await mqtt.publish(d.device_topic(cfg.discovery_prefix),
                                    json.dumps(d.device_payload(ctx)), qos=1, retain=True)
                 await mqtt.publish(d.AVAILABILITY, "online", qos=1, retain=True)
+                for name in d.REMOVED_TOPICS:   # retained values of removed entities
+                    await mqtt.publish(d.topic(name), b"", qos=1, retain=True)
                 sent: dict[str, str] = {}
                 try:
                     while True:

@@ -108,7 +108,7 @@ class Archive:
         self.ha_connected = False
         self.upload_error: str | None = None      # the last upload failed with this
         self.check_error: str | None = None       # R2 answered the last check with this error
-        self.rule_problems: list[str] | None = None
+        self.rules_logged: str | None = None
         self.token_checked = False           # api_token verified at least once
         self.token_expiry: datetime | None = None   # None: it never expires
         self.changed = asyncio.Event()       # a status value changed
@@ -155,10 +155,6 @@ class Archive:
         loop_now = asyncio.get_running_loop().time()
         month = utc_month(self.now())
         percent = self.guard.percent()
-        rules: dict[str, object] = {"problems": self.rule_problems or []}
-        if self.rule_problems:
-            rules["commands"] = a.rule_commands(self.cfg.bucket, self.cfg.retention, self.cfg.lock,
-                                                self.cfg.jurisdiction)
         reasons = self.health()
         return {
             "archiving": not reasons,
@@ -171,8 +167,6 @@ class Archive:
             "free_tier_usage/attributes": json.dumps({"percent": percent, "limits": LIMITS,
                                                       "guard": self.cfg.free_tier_guard}),
             "free_tier_limit": self.guard.limit_reached(loop_now, month),
-            "bucket_rules": None if self.rule_problems is None else bool(self.rule_problems),
-            "bucket_rules/attributes": json.dumps(rules),
             "token_expiring": self.token_expiring(),
             "token_expiring/attributes": json.dumps(
                 {"expires_on": iso(self.token_expiry) if self.token_expiry else None}),
@@ -632,7 +626,7 @@ class Archive:
         self._restored.set()
         self._changed()
 
-    # --- Free tier guard and bucket rules -------------------------------------------
+    # --- Free tier guard and the bucket's rules -------------------------------------------
     async def usage_loop(self) -> None:
         if self.cloudflare is None:
             return
@@ -688,29 +682,21 @@ class Archive:
             await asyncio.sleep(TOKEN_INTERVAL)
 
     async def rules_loop(self) -> None:
+        """Logs the bucket's lifecycle and lock rules once a day, at INFO and only when they
+        change: they belong to the Cloudflare account, not to the app, so they are no problem
+        of the app's whatever they say."""
         if self.cloudflare is None:
-            if any(v is not None for v in (*self.cfg.retention.values(), *self.cfg.lock.values())):
-                LOGGER.warning("Without api_token the bucket's lifecycle and lock rules are not checked")
             return
         while True:
             try:
-                lifecycle = await self.cloudflare.lifecycle_rules()
-                locks = await self.cloudflare.lock_rules()
+                text = a.describe_rules(await self.cloudflare.lifecycle_rules(),
+                                        await self.cloudflare.lock_rules())
             except CloudflareError as err:
-                LOGGER.warning("Bucket rules not read: %s", err)
-                problems = None
-            else:
-                problems = a.rule_problems(lifecycle, locks, self.cfg.retention, self.cfg.lock)
-                for problem in problems:
-                    LOGGER.warning("Bucket rules: %s", problem)
-                if problems:
-                    LOGGER.warning("To match the options: %s",
-                                   "; ".join(a.rule_commands(self.cfg.bucket, self.cfg.retention,
-                                                             self.cfg.lock, self.cfg.jurisdiction)))
-            if problems != self.rule_problems:
-                self.rule_problems = problems
-                self._changed()
-            await asyncio.sleep(RULES_INTERVAL if problems is not None else 900)
+                text = f"not read ({err})"
+            if text != self.rules_logged:
+                LOGGER.info("Bucket rules (set in Cloudflare, not by the app): %s", text)
+                self.rules_logged = text
+            await asyncio.sleep(RULES_INTERVAL)
 
     # --- Daily summary ------------------------------------------------------------------
     def _summary_days(self, today: date) -> list[str]:

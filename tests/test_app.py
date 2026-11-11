@@ -4,6 +4,7 @@ stream, uploads past the guard, snapshots live and rebuilt, summaries."""
 import asyncio
 import contextlib
 import json
+import logging
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -262,15 +263,17 @@ async def test_summary_waits_for_the_guard(tmp_path):
     assert r2.calls == []
 
 
-async def test_rules_loop_reports(tmp_path):
+async def test_rules_loop_only_logs(tmp_path, caplog):
+    """The bucket's rules belong to the Cloudflare account: one INFO line, no problem."""
     archive, _, _, cf, _ = build(tmp_path)
+    caplog.set_level(logging.INFO, logger="r2_archive")
     async with running(archive.rules_loop()):
-        await settle(lambda: archive.rule_problems is not None)
+        await settle(lambda: archive.rules_logged is not None)
+    assert archive.rules_logged == "lifecycle deletes nothing; lock holds nothing"
+    lines = [r for r in caplog.records if "Bucket rules" in r.getMessage()]
+    assert [r.levelno for r in lines] == [logging.INFO]
     status = archive.status()
-    assert status["bucket_rules"] is True
-    attributes = json.loads(status["bucket_rules/attributes"])
-    assert attributes["commands"] == [
-        "npx wrangler r2 bucket lifecycle add alarm-archive delete-snapshots snapshots/ --expire-days 365"]
+    assert not any(name.startswith("bucket_rules") for name in status)
 
 
 def _log_args(when, message):

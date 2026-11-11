@@ -49,24 +49,6 @@ configuration:
   r2_check_interval:
     name: R2 check interval
     description: "Minutes between checks of the R2 connection (1 to 1440). Each check is one Class B operation, every 15 minutes about 3,000 a month."
-  retention_log:
-    name: Retention of the log
-    description: "unlimited or days. The app checks that the bucket has a matching lifecycle rule; it does not set it."
-  retention_snapshots:
-    name: Retention of snapshots
-    description: "unlimited or days, as above."
-  retention_summaries:
-    name: Retention of summaries
-    description: "unlimited or days, as above."
-  lock_log:
-    name: Bucket lock of the log
-    description: "off, indefinite or days. The app checks that the bucket has a matching lock rule; it does not set it."
-  lock_snapshots:
-    name: Bucket lock of snapshots
-    description: "off, indefinite or days, as above."
-  lock_summaries:
-    name: Bucket lock of summaries
-    description: "off, indefinite or days, as above."
   discovery_prefix:
     name: MQTT discovery prefix
     description: Prefix Home Assistant listens on for MQTT discovery.

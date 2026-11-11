@@ -49,24 +49,6 @@ configuration:
   r2_check_interval:
     name: Prüfintervall R2
     description: "Minuten zwischen zwei Prüfungen der R2-Verbindung (1 bis 1440). Jede Prüfung ist eine Class-B-Operation, alle 15 Minuten etwa 3.000 im Monat."
-  retention_log:
-    name: Aufbewahrung Protokoll
-    description: "unlimited oder Tage. Die App prüft, ob der Bucket eine passende Lifecycle-Regel hat; sie setzt sie nicht."
-  retention_snapshots:
-    name: Aufbewahrung Snapshots
-    description: "unlimited oder Tage, wie oben."
-  retention_summaries:
-    name: Aufbewahrung Zusammenfassungen
-    description: "unlimited oder Tage, wie oben."
-  lock_log:
-    name: Bucket Lock Protokoll
-    description: "off, indefinite oder Tage. Die App prüft, ob der Bucket eine passende Lock-Regel hat; sie setzt sie nicht."
-  lock_snapshots:
-    name: Bucket Lock Snapshots
-    description: "off, indefinite oder Tage, wie oben."
-  lock_summaries:
-    name: Bucket Lock Zusammenfassungen
-    description: "off, indefinite oder Tage, wie oben."
   discovery_prefix:
     name: MQTT-Discovery-Präfix
     description: Präfix, auf dem Home Assistant MQTT-Discovery empfängt.

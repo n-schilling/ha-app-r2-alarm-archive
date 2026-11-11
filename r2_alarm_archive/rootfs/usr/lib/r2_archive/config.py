@@ -16,7 +16,6 @@ ACCOUNT_ID = re.compile(r"^[0-9a-f]{32}$")
 BUCKET = re.compile(r"^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$")
 ENTITY_ID = re.compile(r"^[a-z0-9_]+\.[a-z0-9_]+$")
 # The three kinds of data, each under its own prefix in the bucket
-KINDS = ("log", "snapshots", "summaries")
 
 
 class ConfigError(Exception):
@@ -42,8 +41,6 @@ class Config:
     camera_pictures: int               # pictures per camera and snapshot, a series
     camera_interval: int               # seconds between the pictures of a series
     r2_check_interval: int             # minutes between checks of the R2 connection
-    retention: dict[str, int | None]   # kind -> days, None = unlimited
-    lock: dict[str, int | str | None]  # kind -> days, "indefinite", None = off
     # The broker from the options; None: ask the Supervisor (see supervisor_mqtt)
     mqtt: dict | None
     discovery_prefix: str
@@ -69,15 +66,6 @@ def supervisor_mqtt() -> dict:
                                 "install the Mosquitto broker app or set mqtt_host") from err
     return {"host": data["host"], "port": int(data.get("port") or 1883),
             "username": data.get("username") or None, "password": data.get("password") or None}
-
-
-def _days(name: str, raw: str, words: dict[str, int | str | None]) -> int | str | None:
-    text = str(raw).strip().lower()
-    if text in words:
-        return words[text]
-    if text.isdigit() and 0 < int(text) < 100000:
-        return int(text)
-    raise ConfigError(f"{name} must be {' or '.join(words)} or a number of days, not {raw!r}")
 
 
 def _entities(name: str, raw: object) -> tuple[str, ...]:
@@ -134,16 +122,6 @@ def load(path: Path = OPTIONS) -> Config:
     camera_interval = _number("camera_interval", opts.get("camera_interval", 10), 1, 60)
     r2_check_interval = _number("r2_check_interval", opts.get("r2_check_interval", 15), 1, 1440)
 
-    retention = {k: _days(f"retention_{k}", opts.get(f"retention_{k}", "unlimited"),
-                          {"unlimited": None}) for k in KINDS}
-    lock = {k: _days(f"lock_{k}", opts.get(f"lock_{k}", "off"),
-                     {"off": None, "indefinite": "indefinite"}) for k in KINDS}
-    for kind in KINDS:
-        if lock[kind] is not None and retention[kind] is not None and \
-                (lock[kind] == "indefinite" or lock[kind] > retention[kind]):
-            raise ConfigError(f"lock_{kind} keeps objects longer than retention_{kind} deletes "
-                              "them; the lock would win, so set retention to at least the lock")
-
     api_token = str(opts.get("api_token") or "").strip() or None
     guard = bool(opts.get("free_tier_guard", True))
     if guard and not api_token:
@@ -174,8 +152,6 @@ def load(path: Path = OPTIONS) -> Config:
         camera_pictures=camera_pictures,
         camera_interval=camera_interval,
         r2_check_interval=r2_check_interval,
-        retention=retention,
-        lock=lock,
         mqtt=mqtt,
         discovery_prefix=opts.get("discovery_prefix") or "homeassistant",
         log_level=str(opts.get("log_level") or "info").upper(),

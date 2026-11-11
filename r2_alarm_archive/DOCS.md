@@ -2,7 +2,7 @@
 
 Keeps the alarm log of Home Assistant outside the house: every log entry goes to a Cloudflare R2 bucket as soon as it is written, together with a snapshot of the states and camera pictures whenever the alarm panel changes or an automation asks for one, and a summary of each day. If the Home Assistant machine is stolen or destroyed, the log is still there.
 
-The app reads the log from Home Assistant's recorder and resumes where it stopped, so a restart, an update or an outage loses nothing the recorder still has. Everything waits in a queue on the machine until R2 has confirmed it. Objects are created once and never overwritten; with a bucket lock not even the app's key can delete them.
+The app reads the log from Home Assistant's recorder and resumes where it stopped, so a restart, an update or an outage loses nothing the recorder still has. Everything waits in a queue on the machine until R2 has confirmed it. Objects are created once and never overwritten; the app never deletes anything.
 
 ```mermaid
 sequenceDiagram
@@ -28,8 +28,8 @@ sequenceDiagram
 - An MQTT broker for the status entities, e.g. the Mosquitto broker app with the MQTT integration. Without one the app archives anyway; its entities appear once a broker is there.
 - In Cloudflare:
   1. An R2 bucket for this archive only, storage class **Standard**.
-  2. An R2 API token (**R2 → Manage API tokens**) with **Object Read & Write**, limited to this bucket. Its access key ID and secret go into the options. This key can also delete objects; a bucket lock prevents that (see [Retention and bucket lock](#retention-and-bucket-lock)).
-  3. For the free tier guard and the rule check: an account API token (**My Profile → API Tokens**, or account API tokens) with **Account Analytics Read** and **Workers R2 Storage Read**. Both permissions only read.
+  2. An R2 API token (**R2 → Manage API tokens**) with **Object Read & Write**, limited to this bucket. Its access key ID and secret go into the options. This key can also delete objects; see [Retention and bucket lock](#retention-and-bucket-lock).
+  3. For the free tier guard (and the log line about the bucket's rules): an account API token (**My Profile → API Tokens**, or account API tokens) with **Account Analytics Read** and **Workers R2 Storage Read**. Both permissions only read.
 - Recommended: turn on **Watchdog** on the app's page (**Settings → Apps → R2 Alarm Archive**), so Home Assistant starts the app again should it ever stop.
 
 ## Options
@@ -90,13 +90,13 @@ At the limit **everything stops**, the log too. Nothing is lost: it waits in the
 
 ### Retention and bucket lock
 
-Each kind of data (log, snapshots, summaries) has its own retention and its own bucket lock. The app **does not set** lifecycle or lock rules: a token that can set a lock can remove it too, and on the Home Assistant machine it would let anybody with access to that machine remove the lock and then delete. The app only checks once a day that the bucket's rules match the options and reports a difference in the entity *Bucket rules differ*, with the Wrangler commands that would fix it in its attributes, on the web page and in the log. For example, with the default options:
+How long R2 keeps objects, and whether they can be deleted, is set in the bucket itself, with lifecycle rules (delete after a number of days) and bucket lock rules (no delete, no overwrite). Those rules belong to the Cloudflare account, not to the app: the app **neither sets nor checks them**, and they never count as a problem of the app. With `api_token`, the app writes the rules it finds into its log once at the start and again when they change, as one INFO line, for example:
 
-```bash
-npx wrangler r2 bucket lifecycle add <bucket> delete-snapshots snapshots/ --expire-days 365
+```text
+Bucket rules (set in Cloudflare, not by the app): lifecycle deletes nothing; lock holds nothing
 ```
 
-**Without a lock the app's own R2 key can delete the archive.** Whoever takes over the Home Assistant machine, or gets hold of that key, can then remove exactly the evidence the archive is for. A lock rule per prefix prevents that, e.g. `lock_log: indefinite` with the matching rule `npx wrangler r2 bucket lock add <bucket> lock-log protokoll/ --retention-indefinite`. The overview on the web page says when no lock is set. A lock keeps objects even past their retention, so the options refuse a lock longer than the retention of the same kind.
+Worth knowing when you set them: the app's R2 key (**Object Read & Write**) can delete objects as long as no lock rule holds them; a lock rule wins over a lifecycle rule; and the app's own uploads are not hindered by a lock, because it only creates new objects. Rules are set in the dashboard (**R2 → bucket → Settings**) or with Wrangler, e.g. `npx wrangler r2 bucket lock add <bucket> lock-log protokoll/ --retention-indefinite`.
 
 ### All options
 
@@ -118,8 +118,6 @@ npx wrangler r2 bucket lifecycle add <bucket> delete-snapshots snapshots/ --expi
 | `camera_pictures` | `3` | Pictures per camera and snapshot, 1 to 10; from 2 a series |
 | `camera_interval` | `10` | Seconds between the pictures of a series, 1 to 60 |
 | `r2_check_interval` | `15` | Minutes between checks of the R2 connection, 1 to 1440; one Class B operation each |
-| `retention_log`, `retention_snapshots`, `retention_summaries` | `unlimited`, `365`, `unlimited` | Days, or `unlimited`; checked, not set |
-| `lock_log`, `lock_snapshots`, `lock_summaries` | `off` | `off`, `indefinite` or days; checked, not set |
 | `discovery_prefix` | `homeassistant` | MQTT discovery prefix |
 | `mqtt_host`, `mqtt_port`, `mqtt_username`, `mqtt_password` | | Only for a broker the Supervisor does not know |
 | `log_level` | `info` | `info`, `warning` or `error` |
@@ -130,14 +128,14 @@ Fixed by design: one object per entry that is never overwritten, the folder name
 
 The app adds a page **Alarm Archive** for administrators (**Open web UI** on the app's page, or in the sidebar with **Show in sidebar**). It reads, it never changes anything, and it reaches the browser only through Home Assistant, so no port is opened. It looks like Home Assistant's settings, takes over the theme in use (colors, dark mode) and follows Home Assistant's language (German or English). It opens with a menu:
 
-- **Overview:** whether archiving works and why not, the R2 connection, the queue, last upload and summary; the free tier with absolute figures for the whole account and this bucket, the guard's limits, a projection to the end of the month, the storage growth per day and when the guard's limit would be reached; the bucket rules, with the Wrangler commands when they differ, and a note when no lock is set.
+- **Overview:** whether archiving works and why not, the R2 connection, the queue, last upload and summary; the free tier with absolute figures for the whole account and this bucket, the guard's limits, a projection to the end of the month, the storage growth per day and when the guard's limit would be reached.
 - **Details:** the archived days as a table grouped by month (the newest month open), with entries, snapshots, alarms and summaries per day and month; a filter shows only days with an alarm (a snapshot of `triggered`; snapshots on request are no alarm). A day shows its log lines, its snapshots and its summary files, a snapshot on request as *on request* with its reason; a snapshot shows the change, the reason of a request, the user, the camera pictures and the states.
 - **Queue:** what waits on the machine, and since when; and what lies in the quarantine.
 - **Settings:** opens the app's options in Home Assistant.
 
 A badge in the menu counts the problems and the waiting objects. At the bottom of every page the app shows its name and version, e.g. *R2 Alarm Archive 1.1.0*.
 
-Every file can be downloaded, e.g. a summary or a picture to hand on. A day or a whole month also comes as one ZIP (the icon in the day's header, the download icon in the month's row): every object under its key, the log of each day as readable text, and a list of files R2 no longer has, e.g. after the retention. Objects in the bucket never change, so the app keeps what it read in a cache in `/data` (up to 200 MB). Reads from R2 count against the free tier guard; at its limit the page shows only what the cache has, and a ZIP comes only when the guard allows all its reads.
+Every file can be downloaded, e.g. a summary or a picture to hand on. A day or a whole month also comes as one ZIP (the icon in the day's header, the download icon in the month's row): every object under its key, the log of each day as readable text, and a list of files R2 no longer has, e.g. after a lifecycle rule deleted them. Objects in the bucket never change, so the app keeps what it read in a cache in `/data` (up to 200 MB). Reads from R2 count against the free tier guard; at its limit the page shows only what the cache has, and a ZIP comes only when the guard allows all its reads.
 
 The page shows only objects whose keys have the form the app writes. Should somebody else put objects into the bucket, they never appear on the page or in a ZIP.
 
@@ -153,7 +151,6 @@ One device *R2 Alarm Archive*:
 | Last upload, Last summary | When R2 last confirmed an object, when the last summary was written |
 | Free tier usage | The highest of the three figures in % of the free tier; all three as attributes |
 | Free tier limit reached | On at 90 %; unknown without a usage figure |
-| Bucket rules differ | On when lifecycle or lock rules do not match the options; unknown without `api_token` |
 | API token expires soon | On when `api_token` expires within 14 days, with the date in its attribute `expires_on`; off for a token without expiry; unknown without `api_token`. Checked daily |
 
 All entities are unavailable while the app is stopped. The entity IDs are those Home Assistant usually gives, e.g. `binary_sensor.r2_alarm_archive_archiving`; check them on the device.

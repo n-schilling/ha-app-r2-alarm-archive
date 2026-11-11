@@ -9,6 +9,8 @@ BASE = "r2_alarm_archive"
 AVAILABILITY = f"{BASE}/availability"
 SUPPORT_URL = "https://github.com/n-schilling/ha-app-r2-alarm-archive"
 NAME = "R2 Alarm Archive"
+# State topics of entities that are gone, emptied at every connect
+REMOVED_TOPICS = ("bucket_rules", "bucket_rules/attributes")
 
 
 def topic(name: str) -> str:
@@ -54,9 +56,9 @@ def components() -> dict[str, dict]:
         "free_tier_limit": _entity("binary_sensor", "free_tier_limit", "Free tier limit reached",
                                    device_class="problem", state_topic=topic("free_tier_limit"),
                                    **on_off),
-        "bucket_rules": _entity("binary_sensor", "bucket_rules", "Bucket rules differ",
-                                device_class="problem", state_topic=topic("bucket_rules"),
-                                json_attributes_topic=topic("bucket_rules/attributes"), **on_off),
+        # Removed in 1.1.0 (the bucket's rules are not the app's business): device discovery
+        # deletes a component that comes with its platform only
+        "bucket_rules": {"platform": "binary_sensor"},
         "token_expiring": _entity("binary_sensor", "token_expiring", "API token expires soon",
                                   device_class="problem", state_topic=topic("token_expiring"),
                                   json_attributes_topic=topic("token_expiring/attributes"), **on_off),
