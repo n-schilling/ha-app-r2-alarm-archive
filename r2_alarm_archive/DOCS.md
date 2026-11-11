@@ -134,7 +134,7 @@ The app adds a page **Alarm Archive** for administrators (**Open web UI** on the
 - **Queue:** what waits on the machine, and since when; and what lies in the quarantine.
 - **Settings:** opens the app's options in Home Assistant.
 
-Every page has the same top bar: the app's name (on a subpage a back arrow and the page's title), then *As of* with the time the page's data were read (hidden on narrow screens), a button that loads the page again, and a gear that opens the app's options in Home Assistant. A badge in the menu counts the problems and the waiting objects. At the bottom of every page the app shows its name and version, e.g. *R2 Alarm Archive 1.1.2*.
+Every page has the same top bar: the app's name (on a subpage a back arrow and the page's title), then *As of* with the time the page's data were read (hidden on narrow screens), a button that loads the page again, and a gear that opens the app's options in Home Assistant. A badge in the menu counts the problems and the waiting objects. At the bottom of every page the app shows its name and version, e.g. *R2 Alarm Archive 1.2.0*.
 
 Every file can be downloaded, e.g. a summary or a picture to hand on. A day or a whole month also comes as one ZIP (the button *Download the day as ZIP* under the day's summary, the download icon in the month's row): every object under its key, the log of each day as readable text, and a list of files R2 no longer has, e.g. after a lifecycle rule deleted them. Objects in the bucket never change, so the app keeps what it read in a cache in `/data` (up to 200 MB). Reads from R2 count against the free tier guard; at its limit the page shows only what the cache has, and a ZIP comes only when the guard allows all its reads.
 
