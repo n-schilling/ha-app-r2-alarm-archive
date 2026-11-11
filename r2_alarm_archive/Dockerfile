@@ -1,6 +1,6 @@
 # Pinned by version and digest, so a moved tag cannot change the image unnoticed;
 # Dependabot proposes updates
-FROM ghcr.io/home-assistant/base-python:3.14-alpine3.24-2026.11.0@sha256:aafc599627b1ea2c25c154cbd44867fefe024c12c38a2a355d5e8a4d1b6a7bdd
+FROM ghcr.io/home-assistant/base-python:3.15-alpine3.24-2026.11.0@sha256:31e73797b8c9a0ba62d33f0f46f81174b808fb42bdcb2a902cb0e8c3efdfd8fc
 
 SHELL ["/bin/ash", "-o", "pipefail", "-c"]
 
