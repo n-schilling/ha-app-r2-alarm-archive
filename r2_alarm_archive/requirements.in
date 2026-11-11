@@ -2,5 +2,5 @@
 #   uv pip compile requirements.in --generate-hashes --universal --python-version 3.14 -o requirements.txt
 aiohttp==3.14.5
 aiomqtt==2.5.1
-paho-mqtt==2.1.0
+paho-mqtt==2.2.0
 tzdata==2026.6
