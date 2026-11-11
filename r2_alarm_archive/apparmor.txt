@@ -27,7 +27,7 @@ profile r2_alarm_archive flags=(attach_disconnected,mediate_deleted) {
   signal (send, receive),
 
   # s6-overlay
-  /init ix,
+  /init rix,
   /package/** rix,
   /command/** rix,
   /etc/s6-overlay/** rix,
