@@ -108,8 +108,11 @@ jobs:
       - name: Install Playwright
         run: |
           pip install playwright==1.64.1
-          # No --with-deps: the runner image has Chrome's libraries, and apt mirrors fail now and then
-          playwright install chromium
+          # The runner's Google Chrome, which the script prefers; Playwright's
+          # Chromium only where there is none (no --with-deps: apt mirrors fail now and then)
+          if ! command -v google-chrome > /dev/null; then
+            playwright install chromium
+          fi
       - name: Build (amd64)
         run: |
           version=$(yq -r '.version' r2_alarm_archive/config.yaml)

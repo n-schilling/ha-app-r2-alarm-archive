@@ -32,6 +32,7 @@ import argparse
 import asyncio
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -239,7 +240,10 @@ async def main() -> int:
     if args.out:
         args.out.mkdir(parents=True, exist_ok=True)
     async with async_playwright() as play:
-        browser = await play.chromium.launch()
+        # The installed Google Chrome where there is one (the CI runner has it),
+        # otherwise Playwright's Chromium
+        chrome = Path("/Applications/Google Chrome.app").exists() or shutil.which("google-chrome")
+        browser = await play.chromium.launch(channel="chrome" if chrome else None)
         with tempfile.TemporaryDirectory() as tmp:
             folder = Path(tmp)
             folder.chmod(0o755)  # the container's user reads the pictures
