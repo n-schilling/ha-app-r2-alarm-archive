@@ -2,6 +2,7 @@ version: 2
 updates:
   - package-ecosystem: github-actions
     directory: /
+    target-branch: dev
     schedule:
       interval: weekly
     groups:
@@ -9,6 +10,7 @@ updates:
         patterns: ["*"]
   - package-ecosystem: pip
     directory: /r2_alarm_archive
+    target-branch: dev
     schedule:
       interval: weekly
     groups:
@@ -16,10 +18,12 @@ updates:
         patterns: ["*"]
   - package-ecosystem: docker
     directory: /r2_alarm_archive
+    target-branch: dev
     schedule:
       interval: weekly
   - package-ecosystem: pip
     directory: /
+    target-branch: dev
     schedule:
       interval: weekly
     groups:
