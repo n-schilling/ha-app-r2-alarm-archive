@@ -83,9 +83,10 @@ jobs:
       - name: Start without options
         env:
           PLATFORM: ${{ matrix.platform }}
-        # The archive loads, finds no options and says what to set
+        # The archive loads as its own user, as the s6 service starts it, finds
+        # no options and says what to set
         run: |
-          out=$(docker run --rm --network none --platform "${PLATFORM}" -e PYTHONPATH=/usr/lib \
+          out=$(docker run --rm --network none --platform "${PLATFORM}" --user r2archive -e PYTHONPATH=/usr/lib \
             --entrypoint python3 r2-alarm-archive:test -m r2_archive 2>&1 || true)
           echo "${out}"
           grep -q '/data/options.json not readable' <<< "${out}"

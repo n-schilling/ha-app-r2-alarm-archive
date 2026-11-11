@@ -70,7 +70,7 @@ start_without_options() {
     local out
     docker build -q --build-arg "BUILD_VERSION=${version}" -t r2-alarm-archive:check r2_alarm_archive > /dev/null \
         || return 1
-    out=$(docker run --rm --network none -e PYTHONPATH=/usr/lib --entrypoint python3 \
+    out=$(docker run --rm --network none --user r2archive -e PYTHONPATH=/usr/lib --entrypoint python3 \
         r2-alarm-archive:check -m r2_archive 2>&1 || true)
     echo "    ${out}"
     grep -q '/data/options.json not readable' <<< "${out}"

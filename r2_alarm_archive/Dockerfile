@@ -8,7 +8,9 @@ SHELL ["/bin/ash", "-o", "pipefail", "-c"]
 # requirements.in), so a build installs exactly the files reviewed
 COPY requirements.txt /tmp/
 RUN pip3 install --no-cache-dir --only-binary=:all: --require-hashes -r /tmp/requirements.txt \
-    && rm /tmp/requirements.txt
+    && rm /tmp/requirements.txt \
+    && addgroup -S r2archive \
+    && adduser -S -D -H -G r2archive -h /nonexistent -s /sbin/nologin r2archive
 
 COPY rootfs /
 RUN python3 -m compileall -q /usr/lib/r2_archive

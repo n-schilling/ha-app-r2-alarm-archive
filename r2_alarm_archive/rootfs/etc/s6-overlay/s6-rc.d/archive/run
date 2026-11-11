@@ -1,7 +1,13 @@
 #!/command/with-contenv bashio
 # shellcheck shell=bash
 # ==============================================================================
-# Runs the R2 alarm archive
+# Runs the R2 alarm archive as user r2archive, not as root. The data folder
+# (options, queue, state, cache) and the app's folder in /addon_configs (for
+# the quarantine) are handed to that user first; the Supervisor writes the
+# options as root. Only what is not that user's yet, so a start does not
+# walk the whole cache.
 # ==============================================================================
+find /data /config/quarantine \! -user r2archive -exec chown -h r2archive:r2archive {} + 2> /dev/null || true
+chown r2archive:r2archive /config
 export PYTHONPATH=/usr/lib
-exec python3 -m r2_archive
+exec /command/s6-setuidgid r2archive python3 -m r2_archive
