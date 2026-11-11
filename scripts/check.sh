@@ -1,16 +1,17 @@
 #!/bin/bash
 # Runs locally what the CI workflow runs, so a push only confirms what already
-# passed here: the changelog check, shellcheck, ruff, the tests, and the image
-# built and started for this machine's architecture. Keep the steps in step
-# with .github/workflows/ci.yaml.
+# passed here: the changelog check, shellcheck, ruff, the tests, the image
+# built and started for this machine's architecture, and the Page check on
+# that image. Keep the steps in step with .github/workflows/ci.yaml.
 #
 # Usage: scripts/check.sh [--no-image]
 #
 # The tools come from .venv when there is one (python3 -m venv .venv &&
 # .venv/bin/pip install --require-hashes -r r2_alarm_archive/requirements.txt &&
 # .venv/bin/pip install -r requirements_test.txt), otherwise from PATH. The app configuration linter
-# (frenck/action-addon-linter) runs in CI only. The image step needs Docker;
-# CI builds both architectures.
+# (frenck/action-addon-linter) runs in CI only. The image steps need Docker;
+# CI builds both architectures. The Page check needs Playwright in
+# .venv-shots (see the header of scripts/screenshots.py).
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 2
 
@@ -66,10 +67,12 @@ fi
 run "Ruff" "$RUFF" check r2_alarm_archive/rootfs/usr/lib/r2_archive tests scripts
 run "Tests" "$PYTEST" -q
 
+build() {
+    docker build -q --build-arg "BUILD_VERSION=${version}" -t r2-alarm-archive:check r2_alarm_archive > /dev/null
+}
+
 start_without_options() {
     local out
-    docker build -q --build-arg "BUILD_VERSION=${version}" -t r2-alarm-archive:check r2_alarm_archive > /dev/null \
-        || return 1
     out=$(docker run --rm --network none --user r2archive -e PYTHONPATH=/usr/lib --entrypoint python3 \
         r2-alarm-archive:check -m r2_archive 2>&1 || true)
     echo "    ${out}"
@@ -77,11 +80,19 @@ start_without_options() {
 }
 
 if $no_image; then
-    skipped+=("Build and start (--no-image)")
+    skipped+=("Build and start, Page (--no-image)")
 elif ! docker info > /dev/null 2>&1; then
-    skipped+=("Build and start (Docker is not running)")
+    skipped+=("Build and start, Page (Docker is not running)")
 else
-    run "Build and start" start_without_options
+    run "Build" build
+    if [[ " ${failed[*]-} " != *" Build "* ]]; then
+        run "Start without options" start_without_options
+        if [[ -x .venv-shots/bin/python ]]; then
+            run "Page" .venv-shots/bin/python scripts/screenshots.py --image r2-alarm-archive:check
+        else
+            skipped+=("Page (no .venv-shots, see scripts/screenshots.py)")
+        fi
+    fi
 fi
 
 echo "===================="

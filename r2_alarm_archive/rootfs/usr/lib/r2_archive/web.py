@@ -3,10 +3,12 @@ Home Assistant's settings: a menu, the overview with status and free tier
 details, the archived days grouped by month with their log and snapshots,
 the queue, and a link to the app's options.
 
-The pages are rendered on the server. Their only script is a small inline
-one that takes Home Assistant's theme (colors, card shape, fonts) from the
-page around the ingress frame; without it the page falls back to Home
-Assistant's default colors. Everything shown from the bucket goes through the
+The pages are rendered on the server, each with the same top bar: name,
+the time of the request, refresh and the app's options. Their only script is
+a small inline one that makes the refresh button reload the page and takes
+Home Assistant's theme (colors, card shape, fonts) from the page around the
+ingress frame; without it the page falls back to Home Assistant's default
+colors. Everything shown from the bucket goes through the
 app; objects never change, so what was read once is kept in a cache in /data.
 Every read from R2 passes the free tier guard; at the limit the pages show
 what the cache has. Only keys as the app writes them are shown or packed,
@@ -46,6 +48,8 @@ PORT = 8099              # the Supervisor's default ingress port
 # The Supervisor's ingress proxy; nothing else may talk to the page
 INGRESS_PEER = "172.30.32.2"
 CACHE_BYTES = 200 * 10**6
+# The app's name (config.yaml): the start page's title and the version line
+APP_NAME = "R2 Alarm Archive"
 # Reads from R2 at the same time for a ZIP export
 EXPORT_READS = 4
 CONTENT_TYPES = {".json": "application/json", ".jpg": "image/jpeg", ".gz": "application/gzip",
@@ -53,8 +57,8 @@ CONTENT_TYPES = {".json": "application/json", ".jpg": "image/jpeg", ".gz": "appl
 
 TEXT = {
     "en": {
-        "title": "Alarm archive", "overview": "Overview", "details": "Details", "queue": "Queue",
-        "settings": "Settings", "back": "Back",
+        "overview": "Overview", "details": "Details", "queue": "Queue",
+        "settings": "Settings", "back": "Back", "refresh": "Refresh", "as_of": "As of {}",
         "overview_info": "Status and free tier usage",
         "details_info": "Log, snapshots and summaries by month",
         "queue_info": "Objects waiting for their upload", "settings_info": "The app's options in Home Assistant",
@@ -86,8 +90,8 @@ TEXT = {
         "moved": "Set aside", "missing_files": "Missing files", "reason": "Reason",
     },
     "de": {
-        "title": "Alarm-Archiv", "overview": "Übersicht", "details": "Detailansicht", "queue": "Warteschlange",
-        "settings": "Einstellungen", "back": "Zurück",
+        "overview": "Übersicht", "details": "Detailansicht", "queue": "Warteschlange",
+        "settings": "Einstellungen", "back": "Zurück", "refresh": "Aktualisieren", "as_of": "Stand {}",
         "overview_info": "Status und Free-Tier-Verbrauch",
         "details_info": "Protokoll, Snapshots und Zusammenfassungen nach Monaten",
         "queue_info": "Objekte, die auf ihren Upload warten", "settings_info": "Optionen der App in Home Assistant",
@@ -162,6 +166,7 @@ ICONS = {
     "details": "M7 11H9V13H7V11M21 5V19C21 20.11 20.11 21 19 21H5C3.89 21 3 20.1 3 19V5C3 3.9 3.9 3 5 3H6V1H8V3H16V1H18V3H19C20.11 3 21 3.9 21 5M5 7H19V5H5V7M19 19V9H5V19H19M15 13V11H17V13H15M11 13V11H13V13H11M7 15H9V17H7V15M15 17V15H17V17H15M11 17V15H13V17H11Z",
     "queue": "M2 12H4V17H20V12H22V17C22 18.11 21.11 19 20 19H4C2.9 19 2 18.11 2 17V12M12 2L6.46 7.46L7.88 8.88L11 5.75V15H13V5.75L16.13 8.88L17.55 7.45L12 2Z",
     "settings": "M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8M12,10A2,2 0 0,0 10,12A2,2 0 0,0 12,14A2,2 0 0,0 14,12A2,2 0 0,0 12,10M10,22C9.75,22 9.54,21.82 9.5,21.58L9.13,18.93C8.5,18.68 7.96,18.34 7.44,17.94L4.95,18.95C4.73,19.03 4.46,18.95 4.34,18.73L2.34,15.27C2.21,15.05 2.27,14.78 2.46,14.63L4.57,12.97L4.5,12L4.57,11L2.46,9.37C2.27,9.22 2.21,8.95 2.34,8.73L4.34,5.27C4.46,5.05 4.73,4.96 4.95,5.05L7.44,6.05C7.96,5.66 8.5,5.32 9.13,5.07L9.5,2.42C9.54,2.18 9.75,2 10,2H14C14.25,2 14.46,2.18 14.5,2.42L14.87,5.07C15.5,5.32 16.04,5.66 16.56,6.05L19.05,5.05C19.27,4.96 19.54,5.05 19.66,5.27L21.66,8.73C21.79,8.95 21.73,9.22 21.54,9.37L19.43,11L19.5,12L19.43,13L21.54,14.63C21.73,14.78 21.79,15.05 21.66,15.27L19.66,18.73C19.54,18.95 19.27,19.04 19.05,18.95L16.56,17.95C16.04,18.34 15.5,18.68 14.87,18.93L14.5,21.58C14.46,21.82 14.25,22 14,22H10M11.25,4L10.88,6.61C9.68,6.86 8.62,7.5 7.85,8.39L5.44,7.35L4.69,8.65L6.8,10.2C6.4,11.37 6.4,12.64 6.8,13.8L4.68,15.36L5.43,16.66L7.86,15.62C8.63,16.5 9.68,17.14 10.87,17.38L11.24,20H12.76L13.13,17.39C14.32,17.14 15.37,16.5 16.14,15.62L18.57,16.66L19.32,15.36L17.2,13.81C17.6,12.64 17.6,11.37 17.2,10.2L19.31,8.65L18.56,7.35L16.15,8.39C15.38,7.5 14.32,6.86 13.12,6.62L12.75,4H11.25Z",
+    "refresh": "M17.65,6.35C16.2,4.9 14.21,4 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20C15.73,20 18.84,17.45 19.73,14H17.65C16.83,16.33 14.61,18 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6C13.66,6 15.14,6.69 16.22,7.78L13,11H20V4L17.65,6.35Z",
     "next": "M8.59,16.58L13.17,12L8.59,7.41L10,6L16,12L10,18L8.59,16.58Z",
     "back": "M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z",
     "open": "M7.41,15.41L12,10.83L16.59,15.41L18,14L12,8L6,14L7.41,15.41Z",
@@ -238,26 +243,33 @@ main.wide .alert { margin: 16px; }
 """
 
 # Takes Home Assistant's theme from the page around the ingress frame (same
-# origin), and follows it when the theme or dark mode changes
+# origin), and follows it when the theme or dark mode changes; the refresh
+# button in the header reloads the page
 THEME_VARS = ("primary-background-color", "secondary-background-color", "card-background-color",
               "primary-text-color", "secondary-text-color", "disabled-text-color", "divider-color",
               "primary-color", "text-primary-color", "success-color", "warning-color", "error-color",
               "info-color", "sidebar-background-color", "sidebar-text-color",
               "sidebar-icon-color", "app-header-border-bottom", "ha-card-border-radius", "ha-card-border-width",
               "ha-card-border-color", "ha-card-box-shadow", "ha-font-family-body", "header-height")
-SCRIPT = """(() => { try {
-  const outer = window.parent.document.documentElement;
-  if (outer === document.documentElement) return;
-  const names = NAMES;
-  const take = () => {
-    const theme = getComputedStyle(outer), own = document.documentElement.style;
-    for (const n of names) { const v = theme.getPropertyValue("--" + n).trim(); if (v) own.setProperty("--" + n, v); }
-    const ha = window.parent.document.querySelector("home-assistant");
-    if (ha && ha.hass) own.colorScheme = ha.hass.themes.darkMode ? "dark" : "light";
-  };
-  take();
-  new MutationObserver(take).observe(outer, { attributes: true, attributeFilter: ["style", "class"] });
-} catch (e) {} })();""".replace("NAMES", json.dumps(THEME_VARS))
+SCRIPT = """(() => {
+  try {
+    const outer = window.parent.document.documentElement;
+    if (outer !== document.documentElement) {
+      const names = NAMES;
+      const take = () => {
+        const theme = getComputedStyle(outer), own = document.documentElement.style;
+        for (const n of names) { const v = theme.getPropertyValue("--" + n).trim(); if (v) own.setProperty("--" + n, v); }
+        const ha = window.parent.document.querySelector("home-assistant");
+        if (ha && ha.hass) own.colorScheme = ha.hass.themes.darkMode ? "dark" : "light";
+      };
+      take();
+      new MutationObserver(take).observe(outer, { attributes: true, attributeFilter: ["style", "class"] });
+    }
+  } catch (e) {}
+  document.addEventListener("click", (e) => {
+    if (e.target.closest("#refresh")) { e.preventDefault(); location.reload(); }
+  });
+})();""".replace("NAMES", json.dumps(THEME_VARS))
 # Only the page's own inline script runs, pictures come from the page itself;
 # the inline styles are the page's own (style-src without a hash: the menu's
 # icon colors are style attributes)
@@ -341,6 +353,12 @@ class Cache:
                 size = old.stat().st_size
                 old.unlink()
                 self._total -= size
+
+
+def host_slug() -> str | None:
+    """The app's slug, e.g. 4a183770_r2_alarm_archive: the Supervisor names
+    the container's host after it; none outside the Supervisor's containers."""
+    return os.environ.get("HOSTNAME", "").replace("-", "_") or None
 
 
 def valid_day(day: str) -> bool:
@@ -472,7 +490,7 @@ class Web:
         return f"{MONTHS[self.lang][int(number_) - 1]} {year}"
 
     def page(self, request: web.Request, title: str, body: str, back: str | None = None,
-             width: str = "", actions: str = "") -> web.Response:
+             width: str = "") -> web.Response:
         base = html.escape(request.headers.get("X-Ingress-Path", ""), quote=True)
         body = body.replace("{base}", base)
         back_link = (f'<a class="icon-button back" href="{base}{back}" title="{self.t("back")}">{icon("back")}</a>'
@@ -483,22 +501,36 @@ class Web:
             f"<title>{html.escape(title)}</title><style>{HA_CSS}</style><style>{STYLE}</style>"
             f"<script>{SCRIPT}</script></head><body>"
             f"<header>{back_link}<h1>{html.escape(title)}</h1>"
-            f'<div class="actions">{actions.replace("{base}", base)}</div></header>'
+            f'<div class="actions">{self.header_actions()}</div></header>'
             f'<main class="{width}">{body}</main>{self.about()}</body></html>'))
+
+    def header_actions(self) -> str:
+        """The same three on every page: when the data were read, refresh,
+        and the app's options in Home Assistant."""
+        stamp = html.escape(self.t("as_of").format(self.clock(self.archive.now())))
+        actions = (f'<span class="stamp opt">{stamp}</span>'
+                   f'<a class="icon-button" id="refresh" href="" role="button" title="{self.t("refresh")}">'
+                   f'{icon("refresh")}</a>')
+        # The options are Home Assistant's own page, outside the ingress frame
+        if self.slug:
+            actions += (f'<a class="icon-button" href="/config/app/{html.escape(self.slug, quote=True)}/config" '
+                        f'target="_top" title="{self.t("settings")}">{icon("settings")}</a>')
+        return actions
 
     def about(self) -> str:
         """The app and its version, at the bottom of every page."""
-        return f'<footer class="version">{html.escape(f"R2 Alarm Archive {self.version}".strip())}</footer>'
+        return f'<footer class="version">{html.escape(f"{APP_NAME} {self.version}".strip())}</footer>'
 
     @staticmethod
     def alert(text: str) -> str:
         """A warning like ha-alert."""
         return f'<div class="alert warning">{icon("alert")}<div>{html.escape(text)}</div></div>'
 
-    def card(self, title: str | None, content: str, padded: bool = True) -> str:
+    def card(self, title: str | None, content: str, padded: bool = True, actions: str = "") -> str:
         head = f"<h2>{html.escape(title)}</h2>" if title else ""
         inner = f'<div class="content">{content}</div>' if padded else content
-        return f'<div class="card">{head}{inner}</div>'
+        foot = f'<div class="card-actions">{actions}</div>' if actions else ""
+        return f'<div class="card">{head}{inner}{foot}</div>'
 
     def table(self, cols: str, head: list[tuple[str, str]], rows: list[str], empty: str) -> str:
         """A table like Home Assistant's data table; head cells are (text, class)."""
@@ -553,7 +585,7 @@ class Web:
                         f'{icon(name)}</span><span class="text"><span class="headline">{self.t(name)}</span>'
                         f'<span class="supporting">{self.t(name + "_info")}</span></span>{badge}'
                         f'{icon("next", "next")}</a>')
-        return self.page(request, self.t("title"), self.card(None, "".join(rows), padded=False), width="narrow")
+        return self.page(request, APP_NAME, self.card(None, "".join(rows), padded=False), width="narrow")
 
     async def overview(self, request: web.Request) -> web.Response:
         archive = self.archive
@@ -725,12 +757,10 @@ class Web:
                         f'<div>{html.escape(key.rsplit("/", 1)[1])}</div>{icon("download", "next")}</a>')
         summaries = self.table("files", [(self.t("file"), ""), ("", "")], rows, self.t("none"))
         note = self.alert(self.t("cached_only")) if blocked else ""
+        export = f'<a class="button" href="{{base}}/export/{day}.zip">{icon("zip")}{self.t("export_day")}</a>'
         body = (note + self.card(self.t("log"), log, padded=False) + self.card(self.t("snapshots"), snapshots, padded=False)
-                + self.card(self.t("summary"), summaries, padded=False))
-        export = (f'<a class="icon-button" href="{{base}}/export/{day}.zip" title="{self.t("export_day")}">'
-                  f'{icon("zip")}</a>')
-        return self.page(request, self.day_text(day, weekday=True), body, back=f"/details?month={day[:7]}",
-                         actions=export)
+                + self.card(self.t("summary"), summaries, padded=False, actions=export))
+        return self.page(request, self.day_text(day, weekday=True), body, back=f"/details?month={day[:7]}")
 
     @staticmethod
     def folder_time(folder: str) -> datetime | None:

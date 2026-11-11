@@ -90,3 +90,35 @@ jobs:
             --entrypoint python3 r2-alarm-archive:test -m r2_archive 2>&1 || true)
           echo "${out}"
           grep -q '/data/options.json not readable' <<< "${out}"
+
+  page:
+    # STANDARD.md §8: the built image (amd64) with made-up data in a throwaway
+    # container, the page opened as Home Assistant's ingress would, checked in
+    # light, dark and at phone width; the screenshots come with it
+    name: Page
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+      - name: Install Playwright
+        run: |
+          pip install playwright==1.64.1
+          playwright install --with-deps chromium
+      - name: Build (amd64)
+        run: |
+          version=$(yq -r '.version' r2_alarm_archive/config.yaml)
+          docker build --build-arg "BUILD_VERSION=${version}" -t r2-alarm-archive:page r2_alarm_archive
+      - name: Check the page
+        run: python scripts/screenshots.py --image r2-alarm-archive:page --out screenshots
+      - name: Keep the screenshots
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: screenshots
+          path: screenshots
+          if-no-files-found: ignore

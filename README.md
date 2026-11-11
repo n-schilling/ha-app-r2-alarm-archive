@@ -83,7 +83,7 @@ python3 -m venv .venv
 scripts/check.sh
 ```
 
-`scripts/check.sh` runs what CI runs (changelog, shellcheck, ruff, tests, and the image built and started when Docker runs; `--no-image` skips that). The screenshots come from `scripts/screenshots.py` (see its header for the setup): it serves the page with made-up data on 127.0.0.1 and draws it with headless Chromium.
+`scripts/check.sh` runs what CI runs (changelog, shellcheck, ruff, tests, and when Docker runs the image built and started and the Page check; `--no-image` skips those). The Page check and the screenshots are one script, `scripts/screenshots.py` (see its header for the setup): it starts the built image in a throwaway container with made-up data (`scripts/demo.py`), opens the page with headless Chromium as Home Assistant's ingress would, and checks every page in light, dark and at phone width: the top bar (name, *As of* stamp, refresh, settings link with `target="_top"` and the slug), the version line, and no console errors or CSP violations. With `--out docs/screenshots` it also draws the screenshots.
 
 The image's packages are listed in [`requirements.in`](r2_alarm_archive/requirements.in); [`requirements.txt`](r2_alarm_archive/requirements.txt) pins them and everything they pull in with their hashes, and the image installs it with `--require-hashes`. After changing `requirements.in`, run `uv pip compile requirements.in --generate-hashes --universal --python-version 3.14 -o requirements.txt` in `r2_alarm_archive`.
 

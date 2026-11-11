@@ -22,7 +22,7 @@ from .cloudflare import Cloudflare
 from .ha import HA
 from .r2 import R2
 from .store import Queue, State
-from .web import Cache, Web
+from .web import Cache, Web, host_slug
 
 LOGGER = logging.getLogger("r2_archive")
 DATA = Path("/data")
@@ -105,7 +105,8 @@ async def run(cfg: cfg_module.Config) -> None:
     token = os.environ.get("SUPERVISOR_TOKEN")
     if not token:
         raise cfg_module.ConfigError("no SUPERVISOR_TOKEN: the app needs homeassistant_api")
-    slug = os.environ.get("HOSTNAME", "r2-alarm-archive").replace("-", "_")
+    page_slug = host_slug()
+    slug = page_slug or "r2_alarm_archive"
     version = os.environ.get("APP_VERSION") or "unknown"
     ctx = d.Context(prefix=cfg.discovery_prefix, version=version,
                     config_url=f"homeassistant://config/app/{slug}/info")
@@ -128,7 +129,7 @@ async def run(cfg: cfg_module.Config) -> None:
             tasks.create_task(archive.rules_loop())
             tasks.create_task(archive.token_loop())
             tasks.create_task(archive.summary_loop())
-            tasks.create_task(Web(archive, Cache(DATA / "cache"), slug=slug, version=version).run())
+            tasks.create_task(Web(archive, Cache(DATA / "cache"), slug=page_slug, version=version).run())
 
 
 def main() -> None:

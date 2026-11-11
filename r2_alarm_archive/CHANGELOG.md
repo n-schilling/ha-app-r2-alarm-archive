@@ -2,6 +2,18 @@
 
 All notable changes to this app are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the app uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.2] - 2026-11-11
+
+### Added
+
+- CI job *Page*: the built image with made-up data in a throwaway container, the page opened as Home Assistant's ingress would and checked in light, dark and at phone width (top bar, version line, no console errors or CSP violations); `scripts/check.sh` runs it too, and the same script draws the screenshots
+
+### Changed
+
+- Every page of the web page has the same top bar as the other apps of this kind: the app's name (a back arrow and the title on a subpage), the time the data were read (*As of*), a refresh button and a gear to the app's options in Home Assistant
+- The day's ZIP download is a button under the day's summary instead of an icon in the top bar
+- The start page is titled with the app's name, *R2 Alarm Archive*
+
 ## [1.1.1] - 2026-11-11
 
 ### Security

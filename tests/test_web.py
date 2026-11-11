@@ -331,6 +331,56 @@ async def test_version_at_the_bottom_of_every_page(client):
         assert page.endswith('</main><footer class="version">R2 Alarm Archive 9.8.7</footer></body></html>'), path
 
 
+PAGES = ("/", "/overview", "/details", f"/day/{DAY}", f"/snapshot/{DAY}/{FOLDER.rsplit('/', 1)[1]}", "/queue")
+
+
+async def test_same_header_on_every_page(client, tmp_path):
+    """STANDARD.md §7: name (with a back arrow on a subpage), then stamp,
+    refresh and the app's options, and nothing else in the header."""
+    import re
+    c, archive, _ = client
+    gear = ('<a class="icon-button" href="/config/app/local_r2_alarm_archive/config" target="_top" '
+            'title="Einstellungen">')
+    for path in PAGES:
+        page = await text(c, path, {"X-Ingress-Path": "/api/hassio_ingress/abc"})
+        header = page.split("<header>", 1)[1].split("</header>", 1)[0]
+        start, actions = header.split('<div class="actions">', 1)
+        if path == "/":
+            assert start == "<h1>R2 Alarm Archive</h1>"
+        else:
+            assert re.fullmatch(r'<a class="icon-button back" href="/api/hassio_ingress/abc/[^"]*" '
+                                r'title="Zurück"><svg[^>]*><path d="[^"]+"/></svg></a><h1>[^<]+</h1>', start), path
+        assert re.fullmatch(r'<span class="stamp opt">Stand \d\d:\d\d:\d\d</span>'
+                            r'<a class="icon-button" id="refresh" href="" role="button" title="Aktualisieren">'
+                            r'<svg[^>]*><path d="[^"]+"/></svg></a>' + re.escape(gear) +
+                            r'<svg[^>]*><path d="[^"]+"/></svg></a></div>', actions), path
+    archive.language = "en"
+    page = await text(c, "/")
+    assert "As of " in page and 'title="Refresh"' in page and 'title="Settings">' in page
+    # The stamp is the time of the request in the app's time zone
+    assert f"As of {archive.now().astimezone(archive.tz).strftime('%H:%M:%S')}<" in page
+
+
+async def test_no_settings_without_slug(tmp_path, aiohttp_client):
+    archive, _ = seeded(tmp_path)
+    c = await aiohttp_client(Web(archive, Cache(tmp_path / "cache"), allowed_peers=set()).app())
+    page = await text(c, "/overview")
+    assert 'id="refresh"' in page and "/config/app/" not in page
+
+
+async def test_day_export_in_the_body(client):
+    c, _, _ = client
+    page = await text(c, f"/day/{DAY}", {"X-Ingress-Path": "/api/hassio_ingress/abc"})
+    header, body = page.split("</header>", 1)
+    assert "export" not in header
+    assert f'<div class="card-actions"><a class="button" href="/api/hassio_ingress/abc/export/{DAY}.zip">' in body
+
+
+async def test_refresh_reloads_in_the_script():
+    from r2_archive.web import SCRIPT
+    assert 'e.target.closest("#refresh")' in SCRIPT and "location.reload()" in SCRIPT
+
+
 async def test_security_headers(client):
     import base64
     import hashlib
