@@ -24,8 +24,7 @@ profile r2_alarm_archive flags=(attach_disconnected,mediate_deleted) {
   network unix,
 
   # s6 stops its services; the Supervisor stops the container
-  signal (send, receive) peer=@{profile_name},
-  signal (receive) peer=unconfined,
+  signal (send, receive),
 
   # s6-overlay
   /init ix,
