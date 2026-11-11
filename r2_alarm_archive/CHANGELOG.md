@@ -2,6 +2,18 @@
 
 All notable changes to this app are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the app uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-11-11
+
+### Changed
+
+- The page's views are tabs in the top bar, right after the app's icon and name, styled like Home Assistant's tabs (the active one underlined), as on the pages of the other apps and integrations of this kind; the start page is the first tab, *Overview*, and the address names the tab (`/overview`, `/details`, `/queue`), so a reload or the back button stays on it. On a phone the tabs are a bar at the bottom of the page, icon over name. The menu page is gone; the app's options stay behind the gear on the right
+- The top bar shows the app's own icon left of its name, served by the page itself
+- The Page check also checks the icon (loaded, 24 px), the tabs (labels, the active one, in the row of the name on desktop, at the bottom on a phone), that a tab goes to its own address and that a reload and back keep it
+
+### Removed
+
+- The badges that counted problems and waiting objects in the menu; the overview shows both
+
 ## [1.2.1] - 2026-11-11
 
 ### Changed

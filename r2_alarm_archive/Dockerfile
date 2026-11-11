@@ -13,6 +13,8 @@ RUN pip3 install --no-cache-dir --only-binary=:all: --require-hashes -r /tmp/req
     && adduser -S -D -H -G r2archive -h /nonexistent -s /sbin/nologin r2archive
 
 COPY rootfs /
+# The app's icon for the header of its web page, served by the page itself
+COPY icon.png /usr/local/share/ha-app/icon.png
 RUN python3 -m compileall -q /usr/lib/r2_archive
 
 ARG BUILD_ARCH BUILD_DATE BUILD_DESCRIPTION BUILD_NAME BUILD_REF BUILD_REPOSITORY BUILD_VERSION

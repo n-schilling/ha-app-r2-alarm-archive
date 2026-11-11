@@ -4,6 +4,7 @@ the guard, and that only the ingress proxy gets in."""
 import asyncio
 import gzip
 import json
+import re
 from datetime import UTC, datetime
 from urllib.parse import quote
 
@@ -68,24 +69,39 @@ async def text(client, path, headers=None):
     return await resp.text()
 
 
-async def test_menu(client):
+async def test_tabs(client):
+    """The start page is the first tab, the overview; every tab page names its
+    tab in the path and marks it active, and there is no menu page any more."""
     c, archive, _ = client
-    page = await text(c, "/", {"X-Ingress-Path": "/api/hassio_ingress/abc"})
-    for name in ("overview", "details", "queue"):
-        assert f'href="/api/hassio_ingress/abc/{name}"' in page
-    # The options are Home Assistant's own page, outside the ingress frame
-    assert 'href="/config/app/local_r2_alarm_archive/config" target="_top"' in page
-    assert "Detailansicht" in page and "<span class=\"badge" not in page
-    archive.r2_connected = False
-    archive._enqueue("protokoll/2026/11/01/x.json", "log", "2026-11-01", b"x", "application/json")
-    page = await text(c, "/")
-    assert '<span class="badge warn">1</span>' in page and '<span class="badge">1</span>' in page
+    for path, active in (("/", "overview"), ("/overview", "overview"), ("/details", "details"),
+                         ("/details?alarms=1", "details"), ("/queue", "queue")):
+        page = await text(c, path, {"X-Ingress-Path": "/api/hassio_ingress/abc"})
+        nav = page.split('<nav class="tabs">', 1)[1].split("</nav>", 1)[0]
+        tabs = re.findall(r'<a class="tab( active)?"(?: aria-current="page")? href="([^"]+)"><svg[^>]*>'
+                          r'<path d="[^"]+"/></svg><span>([^<]+)</span></a>', nav)
+        assert [(href, label) for _, href, label in tabs] == [
+            ("/api/hassio_ingress/abc/overview", "Übersicht"), ("/api/hassio_ingress/abc/details", "Detailansicht"),
+            ("/api/hassio_ingress/abc/queue", "Warteschlange")], path
+        assert [href.rsplit("/", 1)[1] for on, href, _ in tabs if on] == [active], path
+        assert '<body class="tabbed">' in page and 'class="item"' not in page
+    assert "Archivierung läuft" in await text(c, "/")
+    archive.language = "en"
+    assert "<span>Overview</span>" in await text(c, "/") and "<span>Queue</span>" in await text(c, "/queue")
+
+
+async def test_icon(client):
+    """The app's icon, the same file as in the app store, from the page itself."""
+    from pathlib import Path
+    c, _, _ = client
+    resp = await c.get("/icon.png")
+    assert resp.status == 200 and resp.content_type == "image/png"
+    assert await resp.read() == (Path(__file__).resolve().parents[1] / "r2_alarm_archive/icon.png").read_bytes()
 
 
 async def test_overview(client):
     c, archive, _ = client
     page = await text(c, "/overview", {"X-Ingress-Path": "/api/hassio_ingress/abc"})
-    assert "Archivierung läuft" in page and 'class="icon-button back" href="/api/hassio_ingress/abc/"' in page
+    assert "Archivierung läuft" in page and 'class="icon-button back"' not in page
     assert "1.234" in page and "900.000" in page and "7,0 MB" in page and "2,0 MB" in page and "0,12 %" in page
     archive.language = "en"
     archive.r2_connected = False
@@ -335,9 +351,9 @@ PAGES = ("/", "/overview", "/details", f"/day/{DAY}", f"/snapshot/{DAY}/{FOLDER.
 
 
 async def test_same_header_on_every_page(client, tmp_path):
-    """STANDARD.md §7: name (with a back arrow on a subpage), then stamp,
-    refresh and the app's options, and nothing else in the header."""
-    import re
+    """STANDARD.md §7: icon, name and tabs (a back arrow and the title on a
+    subpage), then stamp, refresh and the app's options, and nothing else in
+    the header."""
     c, archive, _ = client
     gear = ('<a class="icon-button" href="/config/app/local_r2_alarm_archive/config" target="_top" '
             'title="Einstellungen">')
@@ -345,8 +361,10 @@ async def test_same_header_on_every_page(client, tmp_path):
         page = await text(c, path, {"X-Ingress-Path": "/api/hassio_ingress/abc"})
         header = page.split("<header>", 1)[1].split("</header>", 1)[0]
         start, actions = header.split('<div class="actions">', 1)
-        if path == "/":
-            assert start == "<h1>R2 Alarm Archive</h1>"
+        if path in ("/", "/overview", "/details", "/queue"):
+            assert re.fullmatch(r'<img class="app-icon" src="/api/hassio_ingress/abc/icon.png" alt="" '
+                                r'width="24" height="24"><h1>R2 Alarm Archive</h1><nav class="tabs">.*</nav>',
+                                start), path
         else:
             assert re.fullmatch(r'<a class="icon-button back" href="/api/hassio_ingress/abc/[^"]*" '
                                 r'title="Zurück"><svg[^>]*><path d="[^"]+"/></svg></a><h1>[^<]+</h1>', start), path

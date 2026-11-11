@@ -1,10 +1,12 @@
 """A small read-only web page behind Home Assistant's ingress, laid out like
-Home Assistant's settings: a menu, the overview with status and free tier
-details, the archived days grouped by month with their log and snapshots,
-the queue, and a link to the app's options.
+Home Assistant's settings pages: three tabs, the overview with status and
+free tier details, the archived days grouped by month with their log and
+snapshots, and the queue.
 
-The pages are rendered on the server, each with the same top bar: name,
-the time of the request, refresh and the app's options. Their only script is
+The pages are rendered on the server, each with the same top bar: the app's
+icon and name with the three tabs in the same row (a back arrow and the
+title on a subpage), the time of the request, refresh and the app's options;
+at phone width the tabs move to a bar at the bottom. Their only script is
 a small inline one that makes the refresh button reload the page, takes
 Home Assistant's theme (colors, card shape, fonts) from the page around the
 ingress frame and keeps the viewer's interface language in a cookie
@@ -61,9 +63,6 @@ TEXT = {
     "en": {
         "overview": "Overview", "details": "Details", "queue": "Queue",
         "settings": "Settings", "back": "Back", "refresh": "Refresh", "as_of": "As of {}",
-        "overview_info": "Status and free tier usage",
-        "details_info": "Log, snapshots and summaries by month",
-        "queue_info": "Objects waiting for their upload", "settings_info": "The app's options in Home Assistant",
         "status": "Status", "working": "Archiving works", "broken": "Archiving does not work",
         "r2": "R2 connection", "reachable": "reachable",
         "unreachable": "not reachable", "unknown": "not used since the start", "waiting": "Waiting objects",
@@ -94,9 +93,6 @@ TEXT = {
     "de": {
         "overview": "Übersicht", "details": "Detailansicht", "queue": "Warteschlange",
         "settings": "Einstellungen", "back": "Zurück", "refresh": "Aktualisieren", "as_of": "Stand {}",
-        "overview_info": "Status und Free-Tier-Verbrauch",
-        "details_info": "Protokoll, Snapshots und Zusammenfassungen nach Monaten",
-        "queue_info": "Objekte, die auf ihren Upload warten", "settings_info": "Optionen der App in Home Assistant",
         "status": "Status", "working": "Archivierung läuft", "broken": "Archivierung gestört",
         "r2": "R2-Verbindung", "reachable": "erreichbar",
         "unreachable": "nicht erreichbar", "unknown": "seit dem Start noch nicht benutzt", "waiting": "Wartende Objekte",
@@ -178,8 +174,9 @@ ICONS = {
     "ok": "M12 2C6.5 2 2 6.5 2 12S6.5 22 12 22 22 17.5 22 12 17.5 2 12 2M10 17L5 12L6.41 10.59L10 14.17L17.59 6.58L19 8L10 17Z",
     "alert": "M13,13H11V7H13M13,17H11V15H13M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2Z",
 }
-# Icon backgrounds in the menu, in the manner of Home Assistant's settings
-MENU_COLORS = {"overview": "#5A87FA", "details": "#E48629", "queue": "#518C43", "settings": "#4A5963"}
+# The views of the page, as tabs in the header: (name = text key and icon, path);
+# the first one is also the start page
+TABS = (("overview", "/overview"), ("details", "/details"), ("queue", "/queue"))
 
 
 def icon(name: str, cls: str = "") -> str:
@@ -192,23 +189,28 @@ HA_CSS = (Path(__file__).resolve().parents[2] / "local/share/ha-app/ha.css").rea
 # The language of Home Assistant's interface for the page (cookie ha_lang),
 # shared like ha.css; it runs first, in the page's one script
 HA_LANG_JS = (Path(__file__).resolve().parents[2] / "local/share/ha-app/ha-lang.js").read_text()
+# The app's icon (icon.png of the repository, as in the app store), which the
+# Dockerfile copies next to ha.css; in the repository (tests) the original
+APP_ICON = next((p.read_bytes() for p in (Path(__file__).resolve().parents[2] / "local/share/ha-app/icon.png",
+                                           *[d / "icon.png" for d in Path(__file__).resolve().parents[4:5]])
+                  if p.is_file()), b"")
 # What only this page needs, after ha.css
 STYLE = """
 header > .back { margin: 0 8px 0 -12px; }
-main.narrow { max-width: 632px; }
-main.wide { max-width: none; padding: 0; }
-.item { display: flex; align-items: center; gap: 16px; min-height: 66px; padding: 12px 16px;
-  color: var(--primary-text-color); }
-.item:hover, a.row:hover { background: var(--ha-hover); }
-.icon-bg { display: flex; padding: 8px; border-radius: 50%; color: #fff; }
-.text { display: flex; flex: 1; flex-direction: column; min-width: 0; }
-.headline { line-height: 20px; }
-.supporting { font-size: var(--ha-font-size-s); line-height: 16px; color: var(--secondary-text-color); margin-top: 2px; }
-.next { color: var(--secondary-text-color); }
-.badge { min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; font-size: var(--ha-font-size-s);
-  font-weight: var(--ha-font-weight-medium); line-height: 20px; text-align: center; color: var(--text-primary-color);
+header > .app-icon { flex: none; width: 24px; height: 24px; margin-right: 12px; }
+/* The tabs of Home Assistant's settings pages, in the row of the name (as Network Plus) */
+header > .tabs { display: flex; align-self: stretch; min-width: 0; margin-left: 24px; overflow-x: auto;
+  scrollbar-width: none; }
+.tab { display: flex; align-items: center; justify-content: center; position: relative; padding: 0 20px;
+  color: var(--sidebar-text-color); font-weight: var(--ha-font-weight-medium); white-space: nowrap; opacity: 0.8; }
+.tab:hover { background: var(--ha-hover); }
+.tab.active { color: var(--primary-color); opacity: 1; }
+.tab.active::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 2px;
   background: var(--primary-color); }
-.badge.warn { background: var(--warning-color); }
+.tab svg { display: none; }
+main.wide { max-width: none; padding: 0; }
+a.row:hover { background: var(--ha-hover); }
+.next { color: var(--secondary-text-color); }
 ul.problems { margin: 0 0 12px; padding-left: 32px; }
 pre { margin: 8px 0 0; padding: 12px; overflow-x: auto; border-radius: 8px; font-size: var(--ha-font-size-s);
   background: var(--secondary-background-color); }
@@ -241,6 +243,17 @@ main.wide .toolbar { min-height: 56px; padding: 8px 16px; border-bottom: 1px sol
 main.wide .alert { margin: 16px; }
 .chip svg { width: 18px; height: 18px; }
 @media (max-width: 600px) {
+  /* At phone width the tabs are a bar at the bottom, icon over name, as in Network Plus */
+  header > .tabs { position: fixed; z-index: 2; left: 0; right: 0; bottom: 0; margin: 0;
+    padding-bottom: env(safe-area-inset-bottom); background: var(--sidebar-background-color);
+    border-top: 1px solid var(--divider-color); }
+  body.tabbed { padding-bottom: calc(57px + env(safe-area-inset-bottom)); }
+  .tab { flex: 1 1 0; flex-direction: column; gap: 2px; min-width: 0; height: 56px; padding: 6px 2px 4px;
+    font-size: 11px; line-height: 16px; }
+  .tab span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+  .tab svg { display: block; box-sizing: content-box; width: 24px; height: 24px; padding: 2px 12px; border-radius: 14px; }
+  .tab.active svg { background: color-mix(in srgb, var(--primary-color) 15%, transparent); }
+  .tab.active::after { display: none; }
   .cols-details { --cols: minmax(0, 5fr) repeat(3, minmax(0, 3fr)) 24px; }
   .cols-log { --cols: 64px minmax(0, 1fr); }
   .cols-queue { --cols: minmax(0, 3fr) minmax(0, 1fr) minmax(0, 2fr); }
@@ -276,9 +289,8 @@ SCRIPT = """(() => {
   });
 })();""".replace("NAMES", json.dumps(THEME_VARS))
 SCRIPT = HA_LANG_JS + SCRIPT
-# Only the page's own inline script runs, pictures come from the page itself;
-# the inline styles are the page's own (style-src without a hash: the menu's
-# icon colors are style attributes)
+# Only the page's own inline script runs, pictures (and the app's icon) come
+# from the page itself; the inline style blocks are the page's own
 CSP = ("default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; "
        f"script-src 'sha256-{base64.b64encode(hashlib.sha256(SCRIPT.encode()).digest()).decode()}'; "
        "base-uri 'none'; form-action 'none'; frame-ancestors 'self'")
@@ -422,7 +434,8 @@ class Web:
 
     def app(self) -> web.Application:
         app = web.Application(middlewares=[self._only_ingress, self._security_headers, self._language])
-        app.router.add_get("/", self.menu)
+        app.router.add_get("/", self.overview)
+        app.router.add_get("/icon.png", self.icon)
         app.router.add_get("/overview", self.overview)
         app.router.add_get("/details", self.details)
         app.router.add_get("/day/{day}", self.day)
@@ -529,17 +542,28 @@ class Web:
         return f"{MONTHS[self.lang][int(number_) - 1]} {year}"
 
     def page(self, request: web.Request, title: str, body: str, back: str | None = None,
-             width: str = "") -> web.Response:
+             width: str = "", tab: str | None = None) -> web.Response:
+        """A page: one of the tabs (`tab`, titled with the app's name and icon)
+        or a subpage with a back arrow (`back`) and its own title."""
         base = html.escape(request.headers.get("X-Ingress-Path", ""), quote=True)
         body = body.replace("{base}", base)
-        back_link = (f'<a class="icon-button back" href="{base}{back}" title="{self.t("back")}">{icon("back")}</a>'
-                     if back is not None else "")
+        body_class = ""
+        if back is not None:
+            start = (f'<a class="icon-button back" href="{base}{back}" title="{self.t("back")}">{icon("back")}</a>'
+                     f"<h1>{html.escape(title)}</h1>")
+        else:
+            tabs = "".join((f'<a class="tab active" aria-current="page" href="{base}{path}">' if name == tab
+                            else f'<a class="tab" href="{base}{path}">') + f"{icon(name)}<span>{self.t(name)}</span></a>"
+                           for name, path in TABS)
+            start = (f'<img class="app-icon" src="{base}/icon.png" alt="" width="24" height="24">'
+                     f'<h1>{APP_NAME}</h1><nav class="tabs">{tabs}</nav>')
+            title = f"{APP_NAME} · {title}" if tab else title
+            body_class = ' class="tabbed"'
         return web.Response(content_type="text/html", charset="utf-8", text=(
             f'<!doctype html><html lang="{self.lang}"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width, initial-scale=1">'
             f"<title>{html.escape(title)}</title><style>{HA_CSS}</style><style>{STYLE}</style>"
-            f"<script>{SCRIPT}</script></head><body>"
-            f"<header>{back_link}<h1>{html.escape(title)}</h1>"
+            f"<script>{SCRIPT}</script></head><body{body_class}><header>{start}"
             f'<div class="actions">{self.header_actions()}</div></header>'
             f'<main class="{width}">{body}</main>{self.about()}</body></html>'))
 
@@ -608,23 +632,11 @@ class Web:
         return folder.rsplit("/", 1)[1].split("_", 1)[1]
 
     # --- Pages -----------------------------------------------------------------------
-    async def menu(self, request: web.Request) -> web.Response:
-        problems = self.archive.health()
-        waiting = len(self.archive.queue)
-        items = [("overview", "/overview", len(problems), True), ("details", "/details", 0, False),
-                 ("queue", "/queue", waiting, False)]
-        if self.slug:
-            items.append(("settings", f"/config/app/{self.slug}/config", 0, False))
-        rows = []
-        for name, href, count, warn in items:
-            # The settings are Home Assistant's own page, outside the ingress frame
-            link = f'href="{href}" target="_top"' if name == "settings" else f'href="{{base}}{href}"'
-            badge = f'<span class="badge{" warn" if warn else ""}">{count}</span>' if count else ""
-            rows.append(f'<a class="item" {link}><span class="icon-bg" style="background:{MENU_COLORS[name]}">'
-                        f'{icon(name)}</span><span class="text"><span class="headline">{self.t(name)}</span>'
-                        f'<span class="supporting">{self.t(name + "_info")}</span></span>{badge}'
-                        f'{icon("next", "next")}</a>')
-        return self.page(request, APP_NAME, self.card(None, "".join(rows), padded=False), width="narrow")
+    async def icon(self, request: web.Request) -> web.Response:
+        """The app's icon for the header, from the image itself."""
+        if not APP_ICON:
+            raise web.HTTPNotFound()
+        return web.Response(body=APP_ICON, content_type="image/png", headers={"Cache-Control": "private, max-age=86400"})
 
     async def overview(self, request: web.Request) -> web.Response:
         archive = self.archive
@@ -643,7 +655,7 @@ class Web:
             + (f"<tr><th>{self.t('token')}</th><td>{self.token_text()}</td></tr>" if archive.cloudflare else "")
             + "</table>"))
         body += self.card(self.t("free_tier"), self.free_tier())
-        return self.page(request, self.t("overview"), body, back="/")
+        return self.page(request, self.t("overview"), body, tab="overview")
 
     def token_text(self) -> str:
         archive = self.archive
@@ -751,7 +763,7 @@ class Web:
         chip = (f'<a class="chip{" on" if only_alarms else ""}" href="{{base}}/details{"" if only_alarms else "?alarms=1"}">'
                 + (icon("check") if only_alarms else "") + f'{self.t("only_alarms")}</a>')
         return self.page(request, self.t("details"), f'<div class="toolbar">{chip}</div>'
-                         f'<div class="table cols-details">{head}{body}</div>', back="/", width="wide")
+                         f'<div class="table cols-details">{head}{body}</div>', width="wide", tab="details")
 
     async def day(self, request: web.Request) -> web.Response:
         day = request.match_info["day"]
@@ -878,7 +890,7 @@ class Web:
                       + self.alert(self.t("quarantine_info").format(where))
                       + self.table("queue", [(self.t("file"), ""), ("", "opt"), (self.t("size"), "n"),
                                              (self.t("moved"), "")], rows, ""))
-        return self.page(request, self.t("queue"), table, back="/", width="wide")
+        return self.page(request, self.t("queue"), table, width="wide", tab="queue")
 
     async def export(self, request: web.Request) -> web.StreamResponse:
         """A day (YYYY-MM-DD) or a month (YYYY-MM) as one ZIP: every archived
