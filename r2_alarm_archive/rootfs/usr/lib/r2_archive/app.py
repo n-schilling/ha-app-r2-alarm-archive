@@ -103,7 +103,7 @@ class Archive:
         self.now = clock
         self.guard = Guard(enabled=cfg.free_tier_guard)
         self.tz: ZoneInfo | None = None
-        self.language = "en"
+        self.language = ""   # Home Assistant's configured language, once known
         self.r2_connected: bool | None = None
         self.ha_connected = False
         self.upload_error: str | None = None      # the last upload failed with this
@@ -317,7 +317,7 @@ class Archive:
                 failures = 0
                 config = await self.ha.config()
                 try:
-                    self.language = str(config.get("language") or "en")
+                    self.language = str(config.get("language") or "")
                     self.tz = ZoneInfo(config.get("time_zone") or "UTC")
                 except ZoneInfoNotFoundError:
                     LOGGER.warning("Unknown time zone %s; using UTC", config.get("time_zone"))

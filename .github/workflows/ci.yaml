@@ -1,9 +1,11 @@
 name: CI
 # scripts/check.sh runs the same checks locally; keep the two in step.
 
+# Not on main: a commit reaches main only after CI passed for it on dev, and
+# the release workflow checks that before it tags (ci-passed.sh)
 on:
   push:
-    branches: [main, dev]
+    branches: [dev]
   pull_request:
   schedule:
     # Weekly, so a new base image, Home Assistant or linter release that breaks the app shows up
@@ -56,37 +58,39 @@ jobs:
 
   image:
     name: Build and start (${{ matrix.arch }})
-    runs-on: ubuntu-latest
+    # Each architecture on a runner of its own kind, no emulation: the image
+    # is built and tested natively (the arm64 runners are free for public
+    # repositories)
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
         include:
           - arch: amd64
-            platform: linux/amd64
+            runner: ubuntu-24.04
           - arch: aarch64
-            platform: linux/arm64
+            runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - name: Build
-        env:
-          ARCH: ${{ matrix.arch }}
-          PLATFORM: ${{ matrix.platform }}
         run: |
           version=$(yq -r '.version' r2_alarm_archive/config.yaml)
-          docker buildx build --platform "${PLATFORM}" \
-            --build-arg "BUILD_VERSION=${version}" --load -t r2-alarm-archive:test r2_alarm_archive
-      - name: Start without options
+          docker build --build-arg "BUILD_VERSION=${version}" -t r2-alarm-archive:test r2_alarm_archive
+      - name: Image architecture
         env:
-          PLATFORM: ${{ matrix.platform }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          arch=$(docker image inspect --format '{{.Architecture}}' r2-alarm-archive:test)
+          echo "image: ${arch}"
+          [[ "${ARCH}/${arch}" == amd64/amd64 || "${ARCH}/${arch}" == aarch64/arm64 ]]
+      - name: Start without options
         # The archive loads as its own user, as the s6 service starts it, finds
         # no options and says what to set
         run: |
-          out=$(docker run --rm --network none --platform "${PLATFORM}" --user r2archive -e PYTHONPATH=/usr/lib \
+          out=$(docker run --rm --network none --user r2archive -e PYTHONPATH=/usr/lib \
             --entrypoint python3 r2-alarm-archive:test -m r2_archive 2>&1 || true)
           echo "${out}"
           grep -q '/data/options.json not readable' <<< "${out}"

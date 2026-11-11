@@ -8,7 +8,11 @@ checks every page in light, dark and at phone width (STANDARD.md §7 and §8):
   the app's options with target="_top" and the slug from the host name;
 - the version line "R2 Alarm Archive <version of config.yaml>" at the bottom;
 - no console errors, no script errors, no Content-Security-Policy violations;
-- dark mode, and no page wider than a phone at 390 px.
+- dark mode, and no page wider than a phone at 390 px;
+- the page takes the language of Home Assistant's interface, not the
+  browser's (ha-lang.js; a stand-in for its frontend in German, English and
+  French around the ingress frame): one reload when it changes, none when
+  not, and the cookie ha_lang for the ingress path only.
 
 "As ingress would": the container sits in a network whose gateway has the
 Supervisor's address 172.30.32.2, so the page's own check of the client
@@ -90,6 +94,19 @@ HEADER = """() => {
     background: getComputedStyle(document.body).backgroundColor,
   };
 }"""
+
+# Home Assistant's frontend as far as the page reads it: the user's language,
+# with the app in an iframe as the panel shows it (STANDARD.md §7)
+OUTER = """<!doctype html><html><head><meta charset="utf-8"><title>Home Assistant</title><link rel="icon" href="data:,">
+<style>html, body { margin: 0; height: 100%; } iframe { border: 0; width: 100%; height: 100%; display: block; }</style>
+</head><body><home-assistant></home-assistant><script>document.querySelector("home-assistant").hass =
+{ language: "LANG", locale: { language: "LANG" }, themes: { darkMode: false } };</script>
+<iframe src="INGRESS/" title="App"></iframe></body></html>"""
+# The header in each language, as the language check reads it
+LANG_TEXT = {"en": ("As of ", "Refresh", "Settings"), "de": ("Stand ", "Aktualisieren", "Einstellungen")}
+LANG_INFO = """() => [document.documentElement.lang, getComputedStyle(document.documentElement).visibility,
+  (document.querySelector("header .stamp") || {}).textContent, document.querySelector("#refresh").title,
+  document.querySelector("header .actions a[target=_top]").title]"""
 
 
 def docker(*args: str, check: bool = True) -> str:
@@ -229,7 +246,54 @@ async def check(browser, base: str, out: Path | None) -> Failures:
                 await page.screenshot(path=out / f"{where}.png", full_page=True)
                 print(f"{where}.png")
         await context.close()
+    await languages(browser, base, entry, failed)
     return failed
+
+
+async def languages(browser, base: str, entry: str, failed: Failures) -> None:
+    """The browser asks for English, Home Assistant's configured language is
+    English (demo.py); the page follows the viewer's language in Home Assistant
+    (ha-lang.js): one reload when it changes, none when not, and none in a loop
+    for a language the app does not have."""
+    async def ingress(route, request):
+        # With the cookie, which request.headers leaves out and Chromium drops
+        # when it continues to another path: fetched here and handed back
+        headers = {**await request.all_headers(), "x-ingress-path": INGRESS}
+        await route.fulfill(response=await route.fetch(url=base + request.url[len(entry):], headers=headers))
+
+    async def outer(route, request):
+        lang = request.url.partition("?lang=")[2]
+        await route.fulfill(content_type="text/html", body=OUTER.replace("LANG", lang).replace("INGRESS", INGRESS))
+
+    context = await browser.new_context(viewport={"width": 1040, "height": 800}, locale="en-US",
+                                        extra_http_headers={"Accept-Language": "en"})
+    await context.add_init_script(WATCH)
+    await context.route(entry + "/**", ingress)
+    await context.route(base + "/home-assistant?*", outer)
+    page = await context.new_page()
+    errors: list[str] = []
+    page.on("console", lambda m: m.type == "error" and errors.append(m.text))
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    loads: list[str] = []
+    page.on("framenavigated", lambda f: f.parent_frame is not None and loads.append(f.url))
+    for ha_lang, lang, expected in (("de", "de", 2), ("de", "de", 1), ("en-GB", "en", 2), ("fr", "en", 2),
+                                    ("fr", "en", 1)):
+        where = f"Home Assistant in {ha_lang}"
+        loads.clear()
+        await page.goto(f"{base}/home-assistant?lang={ha_lang}")
+        await page.wait_for_timeout(1500)  # room for another reload, which must not come
+        app = next(f for f in page.frames if f.parent_frame is not None)
+        await app.locator("body > header h1").wait_for()
+        shown, visible, stamp, refresh, gear = await app.evaluate(LANG_INFO)
+        failed.expect([shown, visible] == [lang, "visible"], where, f"page in {shown}, {visible}, not {lang}")
+        failed.expect(len(loads) == expected, where, f"loaded {len(loads)} time(s), not {expected}")
+        failed.expect((stamp or "").startswith(LANG_TEXT[lang][0]) and [refresh, gear] == list(LANG_TEXT[lang][1:]),
+                      where, f"header {stamp!r}, {refresh!r}, {gear!r}")
+        held = [(k["value"], k["path"]) for k in await context.cookies() if k["name"] == "ha_lang"]
+        failed.expect(held == [(ha_lang.split("-")[0], f"{INGRESS}/")], where, f"cookie {held}")
+    csp = await app.evaluate("window.__csp")
+    failed.expect(not errors and not csp, "language", f"console errors {errors}, CSP violations {csp}")
+    await context.close()
 
 
 async def main() -> int:

@@ -5,10 +5,11 @@ the queue, and a link to the app's options.
 
 The pages are rendered on the server, each with the same top bar: name,
 the time of the request, refresh and the app's options. Their only script is
-a small inline one that makes the refresh button reload the page and takes
+a small inline one that makes the refresh button reload the page, takes
 Home Assistant's theme (colors, card shape, fonts) from the page around the
-ingress frame; without it the page falls back to Home Assistant's default
-colors. Everything shown from the bucket goes through the
+ingress frame and keeps the viewer's interface language in a cookie
+(ha-lang.js), in which the server renders the pages; without it the page
+falls back to Home Assistant's default colors and configured language. Everything shown from the bucket goes through the
 app; objects never change, so what was read once is kept in a cache in /data.
 Every read from R2 passes the free tier guard; at the limit the pages show
 what the cache has. Only keys as the app writes them are shown or packed,
@@ -22,6 +23,7 @@ import asyncio
 import base64
 import calendar
 import contextlib
+import contextvars
 import gzip
 import hashlib
 import html
@@ -187,6 +189,9 @@ def icon(name: str, cls: str = "") -> str:
 # The look of Home Assistant, the same file in every app of this kind (see its
 # header); the script below replaces its colors with the theme in use
 HA_CSS = (Path(__file__).resolve().parents[2] / "local/share/ha-app/ha.css").read_text()
+# The language of Home Assistant's interface for the page (cookie ha_lang),
+# shared like ha.css; it runs first, in the page's one script
+HA_LANG_JS = (Path(__file__).resolve().parents[2] / "local/share/ha-app/ha-lang.js").read_text()
 # What only this page needs, after ha.css
 STYLE = """
 header > .back { margin: 0 8px 0 -12px; }
@@ -270,12 +275,40 @@ SCRIPT = """(() => {
     if (e.target.closest("#refresh")) { e.preventDefault(); location.reload(); }
   });
 })();""".replace("NAMES", json.dumps(THEME_VARS))
+SCRIPT = HA_LANG_JS + SCRIPT
 # Only the page's own inline script runs, pictures come from the page itself;
 # the inline styles are the page's own (style-src without a hash: the menu's
 # icon colors are style attributes)
 CSP = ("default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; "
        f"script-src 'sha256-{base64.b64encode(hashlib.sha256(SCRIPT.encode()).digest()).decode()}'; "
        "base-uri 'none'; form-action 'none'; frame-ancestors 'self'")
+
+
+def lang_of(cookie: str | None, configured: str | None = None, accept: str | None = None) -> str:
+    """German or English, as Home Assistant's interface shows it to the viewer.
+
+    The page script keeps the viewer's language in the cookie ha_lang
+    (share/ha-app/ha-lang.js): German for "de", English for everything else.
+    Without that cookie, Home Assistant's configured language; only while that
+    is not known yet, German if the browser puts German before English.
+    """
+    for part in (cookie or "").split(";"):
+        name, _, value = part.strip().partition("=")
+        if name == "ha_lang":
+            return "de" if value.strip().lower() == "de" else "en"
+    if configured:
+        return "de" if configured.lower().startswith("de") else "en"
+    for part in (accept or "").split(","):
+        code = part.split(";")[0].strip().lower()
+        if code.startswith("de"):
+            return "de"
+        if code.startswith("en"):
+            return "en"
+    return "en"
+
+
+# The language of the request being answered (set by Web._language)
+REQUEST_LANG: contextvars.ContextVar[str | None] = contextvars.ContextVar("request_lang", default=None)
 
 
 def size_text(n: float, lang: str = "en") -> str:
@@ -388,7 +421,7 @@ class Web:
         self.version = version
 
     def app(self) -> web.Application:
-        app = web.Application(middlewares=[self._only_ingress, self._security_headers])
+        app = web.Application(middlewares=[self._only_ingress, self._security_headers, self._language])
         app.router.add_get("/", self.menu)
         app.router.add_get("/overview", self.overview)
         app.router.add_get("/details", self.details)
@@ -423,13 +456,19 @@ class Web:
         response.headers.setdefault("Referrer-Policy", "same-origin")
         return response
 
+    @web.middleware
+    async def _language(self, request: web.Request, handler):
+        REQUEST_LANG.set(lang_of(request.headers.get("Cookie"), self.archive.language,
+                                 request.headers.get("Accept-Language")))
+        return await handler(request)
+
     # --- Helpers -------------------------------------------------------------------
     def t(self, key: str) -> str:
         return TEXT[self.lang][key]
 
     @property
     def lang(self) -> str:
-        return "de" if self.archive.language.lower().startswith("de") else "en"
+        return REQUEST_LANG.get() or lang_of(None, self.archive.language)
 
     @property
     def tz(self):

@@ -15,7 +15,7 @@ from r2_archive.app import Archive, Problem
 from r2_archive.cloudflare import Usage
 from r2_archive.guard import LIMITS
 from r2_archive.store import Queue, State
-from r2_archive.web import Cache, Web, problem_text
+from r2_archive.web import SCRIPT, Cache, Web, lang_of, problem_text
 
 LOG = "input_boolean.alarm_log"
 DAY = "2026-10-31"
@@ -464,3 +464,38 @@ async def test_shared_stylesheet_first(client):
     page = await text(c, "/")
     assert f"<style>{shared}</style><style>" in page
     assert "footer.version" in shared
+
+
+def test_language_of_home_assistant():
+    # The cookie of share/ha-app/ha-lang.js decides; then Home Assistant's
+    # configured language; the browser's languages only while that is unknown
+    assert lang_of("a=b; ha_lang=de", "en", "en-US") == "de"
+    assert lang_of("ha_lang=en", "de", "de-DE,de") == "en"
+    assert lang_of("ha_lang=fr", "de", "de-DE,de") == "en"
+    assert lang_of(None, "de-CH", "en") == "de"
+    assert lang_of("other=1", "en", "de") == "en"
+    assert lang_of(None, "", "de-DE,de;q=0.9,en;q=0.8") == "de"
+    assert lang_of(None, "", "fr,en;q=0.5,de;q=0.4") == "en"
+    assert lang_of(None, "", None) == "en"
+
+
+async def test_page_in_the_viewers_language(client):
+    c, archive, _ = client
+    archive.language = "de"
+    assert '<html lang="en">' in await text(c, "/overview", {"Cookie": "ha_lang=en", "Accept-Language": "de"})
+    assert '<html lang="en">' in await text(c, "/overview", {"Cookie": "ha_lang=fr"})
+    archive.language = "en"
+    page = await text(c, "/overview", {"Cookie": "ha_lang=de", "Accept-Language": "en"})
+    assert '<html lang="de">' in page and "Archivierung läuft" in page
+    # Without the cookie, Home Assistant's configured language
+    assert '<html lang="en">' in await text(c, "/overview", {"Accept-Language": "de"})
+
+
+async def test_shared_language_script_first(client):
+    """ha-lang.js, the same file in every app, opens the page's one script."""
+    from pathlib import Path
+
+    c, _, _ = client
+    shared = (Path(__file__).parents[1] / "r2_alarm_archive/rootfs/usr/local/share/ha-app/ha-lang.js").read_text()
+    assert "ha_lang" in shared and SCRIPT.startswith(shared)
+    assert f"<script>{SCRIPT}</script>" in await text(c, "/")

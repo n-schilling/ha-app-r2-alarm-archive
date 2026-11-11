@@ -1,38 +1,42 @@
 name: Release
 
-# After a green CI run on main: tag the app version from config.yaml and
-# publish a GitHub release with its CHANGELOG section, unless that tag exists.
+# On each push to main: when CI passed for the commit (it ran on dev, CI does
+# not run again on main; .github/scripts/ci-passed.sh), tag the app version
+# from config.yaml and publish a GitHub release with its CHANGELOG section,
+# unless that tag exists.
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
+  push:
     branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: write
+  checks: read
+  actions: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   release:
     name: Tag and release
     runs-on: ubuntu-latest
-    # Only for pushes to main of this repository, never for pull requests or
-    # forks, which can name a branch main as well
-    if: >-
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.event == 'push' &&
-       github.event.workflow_run.head_repository.full_name == github.repository)
+    timeout-minutes: 30
+    # Started by hand only on main
+    if: github.ref == 'refs/heads/main'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: CI passed for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .github/scripts/ci-passed.sh "${GITHUB_REPOSITORY}" "${GITHUB_SHA}"
       - name: Release the app version
         env:
           GH_TOKEN: ${{ github.token }}
-          SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
           version=$(yq -r '.version' r2_alarm_archive/config.yaml)
           name=$(yq -r '.name' r2_alarm_archive/config.yaml)
@@ -46,4 +50,4 @@ jobs:
             exit 0
           fi
           .github/scripts/changelog-section.sh r2_alarm_archive/CHANGELOG.md "${version}" > notes.md
-          gh release create "${tag}" --target "${SHA}" --title "${name} ${version}" --notes-file notes.md
+          gh release create "${tag}" --target "${GITHUB_SHA}" --title "${name} ${version}" --notes-file notes.md

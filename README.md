@@ -13,7 +13,7 @@ Requires Home Assistant 2026.11 or later.
 
 ## Screenshots
 
-The page looks like Home Assistant's settings and takes over the theme in use. The data in the pictures is made up for these pictures.
+The page looks like Home Assistant's settings, takes over the theme in use and speaks the language of Home Assistant's interface (German or English). The data in the pictures is made up for these pictures.
 
 <img src="docs/screenshots/menu.png" alt="Menu with Overview, Details, Queue and Settings" width="700">
 
@@ -74,7 +74,7 @@ How the log, snapshots, summaries and the free tier guard work is in [the docume
 
 ## Development
 
-The app is a Python package in [`r2_alarm_archive/rootfs/usr/lib/r2_archive`](r2_alarm_archive/rootfs/usr/lib/r2_archive); the page's look comes from the stylesheet shared by these apps, [`ha.css`](r2_alarm_archive/rootfs/usr/local/share/ha-app/ha.css), which stays identical in every app.
+The app is a Python package in [`r2_alarm_archive/rootfs/usr/lib/r2_archive`](r2_alarm_archive/rootfs/usr/lib/r2_archive); the page's look comes from the stylesheet shared by these apps, [`ha.css`](r2_alarm_archive/rootfs/usr/local/share/ha-app/ha.css), and its language from the script shared by them, [`ha-lang.js`](r2_alarm_archive/rootfs/usr/local/share/ha-app/ha-lang.js); both stay identical in every app.
 
 ```bash
 python3 -m venv .venv
@@ -87,7 +87,7 @@ scripts/check.sh
 
 The image's packages are listed in [`requirements.in`](r2_alarm_archive/requirements.in); [`requirements.txt`](r2_alarm_archive/requirements.txt) pins them and everything they pull in with their hashes, and the image installs it with `--require-hashes`. After changing `requirements.in`, run `uv pip compile requirements.in --generate-hashes --universal --python-version 3.14 -o requirements.txt` in `r2_alarm_archive`.
 
-Releases: work on `dev`, raise `version` in `r2_alarm_archive/config.yaml` and add its section to the changelog; when CI is green on `main`, the release workflow tags the version and publishes the release with that section.
+Releases: work on `dev`, raise `version` in `r2_alarm_archive/config.yaml` and add its section to the changelog. CI runs on `dev` (amd64 and aarch64 each on a runner of its own kind); once it is green, push that commit to `main`. CI does not run again there: the release workflow checks that CI passed for the commit, then tags the version and publishes the release with that section.
 
 ## Support
 
