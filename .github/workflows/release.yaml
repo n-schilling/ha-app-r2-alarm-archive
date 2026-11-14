@@ -1,30 +1,38 @@
 name: Release
 
 # On each push to main: when CI passed for the commit (it ran on dev, CI does
-# not run again on main; .github/scripts/ci-passed.sh), tag the app version
-# from config.yaml and publish a GitHub release with its CHANGELOG section,
-# unless that tag exists.
+# not run again on main; .github/scripts/ci-passed.sh) and the app version
+# from config.yaml has no tag yet, build the image for each architecture, push
+# it to the GitHub Container Registry under the name config.yaml gives in
+# `image`, then tag the version and publish a GitHub release with its
+# CHANGELOG section. The images come first: Home Assistant offers a version
+# as soon as config.yaml on main names it, and pulls the image of that
+# version instead of building it.
 on:
   push:
     branches: [main]
   workflow_dispatch:
 
-permissions:
-  contents: write
-  checks: read
-  actions: read
+permissions: {}
 
 concurrency:
   group: release
   cancel-in-progress: false
 
 jobs:
-  release:
-    name: Tag and release
+  check:
+    name: Check
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # Started by hand only on main
     if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      checks: read
+      actions: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      release: ${{ steps.version.outputs.release }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -34,20 +42,95 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: .github/scripts/ci-passed.sh "${GITHUB_REPOSITORY}" "${GITHUB_SHA}"
-      - name: Release the app version
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Version to release
+        id: version
         run: |
           version=$(yq -r '.version' r2_alarm_archive/config.yaml)
-          name=$(yq -r '.name' r2_alarm_archive/config.yaml)
-          tag="v${version}"
           if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "::error::version '${version}' in config.yaml is no x.y.z"
             exit 1
           fi
-          if git rev-parse -q --verify "refs/tags/${tag}" >/dev/null; then
-            echo "${tag} exists, nothing to release"
-            exit 0
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          if git rev-parse -q --verify "refs/tags/v${version}" >/dev/null; then
+            echo "v${version} exists, nothing to release"
+            echo "release=false" >> "${GITHUB_OUTPUT}"
+          else
+            echo "release=true" >> "${GITHUB_OUTPUT}"
           fi
-          .github/scripts/changelog-section.sh r2_alarm_archive/CHANGELOG.md "${version}" > notes.md
-          gh release create "${tag}" --target "${GITHUB_SHA}" --title "${name} ${version}" --notes-file notes.md
+
+  image:
+    name: Image (${{ matrix.arch }})
+    needs: check
+    if: needs.check.outputs.release == 'true'
+    # Each architecture natively on a runner of its own kind, like in CI
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build
+        env:
+          ARCH: ${{ matrix.arch }}
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          # The name from config.yaml, where the Supervisor reads it too
+          image=$(yq -r '.image' r2_alarm_archive/config.yaml)
+          image="${image//\{arch\}/${ARCH}}:${VERSION}"
+          echo "IMAGE=${image}" >> "${GITHUB_ENV}"
+          # The build arguments the Supervisor passes when it builds an app
+          docker build \
+            --build-arg "BUILD_ARCH=${ARCH}" \
+            --build-arg "BUILD_VERSION=${VERSION}" \
+            --build-arg "BUILD_NAME=$(yq -r '.name' r2_alarm_archive/config.yaml)" \
+            --build-arg "BUILD_DESCRIPTION=$(yq -r '.description' r2_alarm_archive/config.yaml)" \
+            --build-arg "BUILD_REPOSITORY=${GITHUB_REPOSITORY}" \
+            --build-arg "BUILD_REF=${GITHUB_SHA}" \
+            --build-arg "BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.version=${VERSION}" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            -t "${image}" r2_alarm_archive
+      - name: Image architecture
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          arch=$(docker image inspect --format '{{.Architecture}}' "${IMAGE}")
+          echo "image: ${arch}"
+          [[ "${ARCH}/${arch}" == amd64/amd64 || "${ARCH}/${arch}" == aarch64/arm64 ]]
+      - name: Push
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin <<< "${GH_TOKEN}"
+          docker push "${IMAGE}"
+
+  release:
+    name: Tag and release
+    needs: [check, image]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Release the app version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          name=$(yq -r '.name' r2_alarm_archive/config.yaml)
+          .github/scripts/changelog-section.sh r2_alarm_archive/CHANGELOG.md "${VERSION}" > notes.md
+          gh release create "v${VERSION}" --target "${GITHUB_SHA}" --title "${name} ${VERSION}" --notes-file notes.md

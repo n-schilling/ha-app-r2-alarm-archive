@@ -1,6 +1,7 @@
 name: R2 Alarm Archive
-version: "1.3.1"
+version: "1.3.2"
 slug: r2_alarm_archive
+image: ghcr.io/n-schilling/{arch}-r2-alarm-archive
 description: Archives the alarm log and snapshots of your Home Assistant alarm panel in a Cloudflare R2 bucket
 url: https://github.com/n-schilling/ha-app-r2-alarm-archive
 homeassistant: 2026.11.0

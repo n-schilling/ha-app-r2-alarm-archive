@@ -2,6 +2,12 @@
 
 All notable changes to this app are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the app uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.2] - 2026-11-14
+
+### Changed
+
+- Home Assistant pulls the app's image from the GitHub Container Registry (`ghcr.io/n-schilling/{arch}-r2-alarm-archive`) instead of building it on your machine: installing and updating are faster, and a backup of the app no longer contains the image (about 81 MB), only its data. The release workflow builds the image for both architectures and pushes it before it tags the version. Restoring a backup pulls the image of the backed-up version, so it needs the registry
+
 ## [1.3.1] - 2026-11-11
 
 ### Changed
