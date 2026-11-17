@@ -5,10 +5,17 @@
  * a second block after it. The values are the defaults of Home Assistant's
  * frontend (light and dark); a page may take the theme in use from the page
  * around the ingress frame by setting the same custom properties on :root.
+ * The frame is that of Home Assistant's own pages (hass-tabs-subpage); the
+ * shared script ha-frame.js sets html.narrow (Home Assistant's narrow, below
+ * 870 px) and the safe-area insets (--safe-area-inset-*) from Home Assistant.
  *
  * Building blocks, named after Home Assistant's own:
- *   header > img.brand + h1 + nav.tabs > a.tab  the 56 px top app bar: icon, name,
- *     (+ svg + span) + .actions > a.icon-button  tabs (bottom bar below 600 px)
+ *   header > a.icon-button.menu[data-ha-menu]   the top app bar, 56 px plus the
+ *     + nav.tabs > a.tab (svg + span)           notch: menu button (narrow only),
+ *     + .actions > .stamp + a.icon-button       the views centred (a bottom bar
+ *                                               when narrow), stamp, refresh, settings;
+ *   header > img.brand + h1.name + .actions     a single view: icon and name;
+ *   header > a.icon-button.back + h1 + .actions a subpage: back arrow and title
  *   main > .cards > .card > h2 + .content       ha-card in a responsive grid
  *   .card > .card-actions                       the line of buttons under a card
  *   .state.ok|.bad|.error > svg + text          a status line with an icon
@@ -19,7 +26,8 @@
  *   .button[.filled|.danger], .icon-button      ha-button, ha-icon-button
  *   dialog > form > h2 + .field + .buttons      ha-dialog with text fields
  *   footer.version                              "<Name> <version>" at the bottom
- * .opt is hidden below 600 px width.
+ * With tabs the header shows no icon and no name (the h1 stays for screen
+ * readers). .opt is hidden below 600 px width, the stamp when narrow.
  */
 :root {
   color-scheme: light dark;
@@ -56,6 +64,11 @@
   --ha-hover: color-mix(in srgb, var(--primary-text-color) 6%, transparent);
   --ha-danger: #b30532;
   --ha-form-background: #f3f3f3;
+  /* A phone's notch and rounded corners: Home Assistant's insets (ha-frame.js), else the browser's */
+  --ha-inset-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+  --ha-inset-right: var(--safe-area-inset-right, env(safe-area-inset-right, 0px));
+  --ha-inset-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+  --ha-inset-left: var(--safe-area-inset-left, env(safe-area-inset-left, 0px));
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -83,30 +96,61 @@ a { color: var(--primary-color); text-decoration: none; }
 svg { width: 24px; height: 24px; fill: currentColor; flex: none; }
 [hidden] { display: none !important; }
 
-/* Top app bar */
+/* Top app bar, as Home Assistant's hass-tabs-subpage draws it */
 header {
   position: sticky; top: 0; z-index: 2;
-  display: flex; align-items: center; height: var(--header-height); padding: 0 4px 0 16px;
+  display: flex; align-items: center; height: calc(var(--header-height) + var(--ha-inset-top));
+  padding: var(--ha-inset-top) calc(12px + var(--ha-inset-right)) 0 calc(12px + var(--ha-inset-left));
   background: var(--sidebar-background-color); color: var(--sidebar-text-color);
   border-bottom: var(--app-header-border-bottom);
 }
+html.narrow header { padding-right: calc(4px + var(--ha-inset-right)); padding-left: calc(4px + var(--ha-inset-left)); }
 header h1 {
-  margin: 0; font-size: var(--ha-font-size-xl); font-weight: var(--ha-font-weight-normal); line-height: 32px;
+  margin: 0; min-width: 0; font-size: var(--ha-font-size-xl); font-weight: var(--ha-font-weight-normal); line-height: 32px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-header .brand { flex: none; width: 24px; height: 24px; margin-right: 12px; object-fit: contain; }
-/* Tabs right after the name, like the tabs of Home Assistant's settings pages */
-header .tabs { display: flex; align-self: stretch; min-width: 0; margin-left: 24px; overflow-x: auto; scrollbar-width: none; }
-header .tab {
-  display: flex; align-items: center; justify-content: center; padding: 0 20px; position: relative;
-  color: var(--sidebar-text-color); font-weight: var(--ha-font-weight-medium); white-space: nowrap; opacity: 0.8;
+header .brand { flex: none; width: 24px; height: 24px; margin: 0 12px 0 4px; object-fit: contain; }
+header .menu { display: none; margin-right: 24px; }
+html.narrow header .menu { display: inline-flex; }
+header .back { margin-right: 12px; }
+/* With tabs no icon and no name, as in Home Assistant; the h1 stays for screen readers */
+header:has(> .tabs) > .brand { display: none; }
+header:has(> .tabs) > h1 {
+  position: absolute; width: 1px; height: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
 }
-header .tab svg { display: none; }
+/* The views: centred in the header, icon beside the label (ha-tab) */
+header .tabs {
+  display: flex; flex: 1; justify-content: center; align-self: stretch; min-width: 0; overflow: hidden;
+  font-size: var(--ha-font-size-m);
+}
+header .tab {
+  display: flex; align-items: center; justify-content: center; gap: 8px; min-width: 0; max-width: 45%;
+  padding: 0 32px; position: relative; color: var(--sidebar-text-color); white-space: nowrap;
+}
+header .tab span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 header .tab:hover { background: var(--ha-hover); }
-header .tab.active { color: var(--primary-color); opacity: 1; }
-header .tab.active::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: var(--primary-color); }
+header .tab:focus-visible { outline: 2px solid var(--primary-color); outline-offset: -2px; }
+header .tab.active { color: var(--primary-color); }
+html:not(.narrow) header .tab.active::after {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: var(--primary-color);
+}
+/* A page without a bar at the bottom keeps its end clear of a phone's home bar */
+body { padding-bottom: var(--ha-inset-bottom); }
+/* Narrow: the views leave the header for a bar at the bottom, icon over label */
+html.narrow body:has(> header .tabs) { padding-bottom: calc(var(--header-height) + 1px + var(--ha-inset-bottom)); }
+html.narrow header .tabs {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 2; justify-content: space-around;
+  padding: 0 calc(16px + var(--ha-inset-right)) var(--ha-inset-bottom) calc(16px + var(--ha-inset-left));
+  background: var(--sidebar-background-color); border-top: 1px solid var(--divider-color);
+  font-size: var(--ha-font-size-s);
+}
+html.narrow header .tab {
+  flex: 0 1 auto; width: 25%; max-width: none; height: var(--header-height); flex-direction: column; gap: 4px;
+  padding: 0 4px; line-height: 16px;
+}
 header .actions { margin-left: auto; display: flex; align-items: center; }
 header .stamp { margin-right: 4px; font-size: var(--ha-font-size-s); color: var(--secondary-text-color); white-space: nowrap; }
+html.narrow header .stamp { display: none; }
 .icon-button {
   display: inline-flex; align-items: center; justify-content: center; width: 48px; height: 48px; padding: 0;
   border: 0; border-radius: 50%; background: none; color: var(--sidebar-icon-color); cursor: pointer;
@@ -118,7 +162,10 @@ header .stamp { margin-right: 4px; font-size: var(--ha-font-size-s); color: var(
 @keyframes ha-spin { to { transform: rotate(360deg); } }
 
 /* Content and cards */
-main { margin: 0 auto; padding: 16px; max-width: 1040px; }
+main {
+  margin: 0 auto; padding: 16px; max-width: 1040px;
+  padding-right: calc(16px + var(--ha-inset-right)); padding-left: calc(16px + var(--ha-inset-left));
+}
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 0 16px; }
 .card {
   margin-bottom: 16px; overflow: hidden;
@@ -242,19 +289,6 @@ footer.version {
 
 @media (max-width: 600px) {
   main { padding: 8px; }
-  /* Narrow: the tabs leave the header for a bar at the bottom, icon over text,
-     as on Home Assistant's own settings pages */
-  body:has(> header .tabs) { padding-bottom: calc(57px + env(safe-area-inset-bottom)); }
-  header .tabs {
-    position: fixed; left: 0; right: 0; bottom: 0; z-index: 2; margin: 0; justify-content: space-around;
-    background: var(--sidebar-background-color); border-top: 1px solid var(--divider-color);
-    padding-bottom: env(safe-area-inset-bottom); overflow: hidden;
-  }
-  header .tab { flex: 1 1 0; flex-direction: column; gap: 2px; height: 56px; padding: 6px 2px 4px; font-size: 11px; min-width: 0; }
-  header .tab svg { display: block; padding: 2px 12px; border-radius: 14px; box-sizing: content-box; }
-  header .tab span { overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
-  header .tab.active svg { background: color-mix(in srgb, var(--primary-color) 15%, transparent); }
-  header .tab.active::after { display: none; }
   .opt { display: none; }
   .search { margin-left: 0; flex: 1 0 100%; }
   .search input { width: 100%; }

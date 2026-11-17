@@ -378,9 +378,10 @@ PAGES = ("/", "/?tab=overview", "/?tab=details", f"/day/{DAY}", f"/snapshot/{DAY
 
 
 async def test_same_header_on_every_page(client, tmp_path):
-    """STANDARD.md §7: icon, name and tabs (a back arrow and the title on a
-    subpage), then stamp, refresh and the app's options, and nothing else in
-    the header."""
+    """STANDARD.md §7: the menu button, the name (hidden by ha.css beside the
+    tabs, no icon) and the tabs (a back arrow and the title on a subpage),
+    then stamp, refresh and the app's options, and nothing else in the
+    header."""
     c, archive, _ = client
     gear = ('<a class="icon-button" href="/config/app/local_r2_alarm_archive/config" target="_top" '
             'title="Einstellungen">')
@@ -389,12 +390,14 @@ async def test_same_header_on_every_page(client, tmp_path):
         header = page.split("<header>", 1)[1].split("</header>", 1)[0]
         start, actions = header.split('<div class="actions">', 1)
         if path in ("/", "/?tab=overview", "/?tab=details", "/?tab=queue"):
-            assert re.fullmatch(r'<img class="brand" src="/api/hassio_ingress/abc/icon.png" alt="" '
-                                r'width="24" height="24"><h1>R2 Alarm Archive</h1><nav class="tabs">.*</nav>',
-                                start), path
+            assert re.fullmatch(r'<a class="icon-button menu" href="" data-ha-menu role="button" title="Menü" '
+                                r'aria-label="Menü"><svg[^>]*><path d="[^"]+"/></svg></a>'
+                                r'<h1 class="name">R2 Alarm Archive</h1><nav class="tabs">.*</nav>', start), path
+            assert "<img" not in start, path
         else:
             assert re.fullmatch(r'<a class="icon-button back" href="/api/hassio_ingress/abc/[^"]*" '
                                 r'title="Zurück"><svg[^>]*><path d="[^"]+"/></svg></a><h1>[^<]+</h1>', start), path
+            assert "data-ha-menu" not in start, path
         assert re.fullmatch(r'<span class="stamp opt">Stand \d\d:\d\d:\d\d</span>'
                             r'<a class="icon-button" id="refresh" href="" role="button" title="Aktualisieren">'
                             r'<svg[^>]*><path d="[^"]+"/></svg></a>' + re.escape(gear) +
@@ -402,6 +405,7 @@ async def test_same_header_on_every_page(client, tmp_path):
     archive.language = "en"
     page = await text(c, "/")
     assert "As of " in page and 'title="Refresh"' in page and 'title="Settings">' in page
+    assert 'data-ha-menu role="button" title="Menu" aria-label="Menu"' in page
     # The stamp is the time of the request in the app's time zone
     assert f"As of {archive.now().astimezone(archive.tz).strftime('%H:%M:%S')}<" in page
 
@@ -552,3 +556,24 @@ async def test_shared_language_script_first(client):
     shared = (Path(__file__).parents[1] / "r2_alarm_archive/rootfs/usr/local/share/ha-app/ha-lang.js").read_text()
     assert "ha_lang" in shared and SCRIPT.startswith(shared)
     assert f"<script>{SCRIPT}</script>" in await text(c, "/")
+
+
+async def test_shared_frame_script_after_the_language(client):
+    """ha-frame.js, the same file in every app, right after ha-lang.js, before
+    the page's own code, in the one script the CSP's hash covers."""
+    import base64
+    import hashlib
+    from pathlib import Path
+
+    c, _, _ = client
+    folder = Path(__file__).parents[1] / "r2_alarm_archive/rootfs/usr/local/share/ha-app"
+    lang, frame = (folder / "ha-lang.js").read_text(), (folder / "ha-frame.js").read_text()
+    assert "home-assistant/subscribe-properties" in frame and "handleSafeArea: true" in frame
+    assert SCRIPT.startswith(lang + frame)
+    resp = await c.get("/")
+    page = await resp.text()
+    # One script element (the shared scripts' comments name <script>)
+    assert page.count("</script>") == 1 and f"<script>{SCRIPT}</script>" in page
+    digest = base64.b64encode(hashlib.sha256(SCRIPT.encode()).digest()).decode()
+    assert f"script-src 'sha256-{digest}'" in resp.headers["Content-Security-Policy"]
+    assert 'content="width=device-width, initial-scale=1, viewport-fit=cover"' in page

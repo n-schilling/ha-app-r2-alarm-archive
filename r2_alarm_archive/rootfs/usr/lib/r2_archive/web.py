@@ -3,13 +3,16 @@ Home Assistant's settings pages: three tabs, the overview with status and
 free tier details, the archived days grouped by month with their log and
 snapshots, and the queue.
 
-The pages are rendered on the server, each with the same top bar: the app's
-icon and name with the three tabs in the same row (a back arrow and the
-title on a subpage), the time of the request, refresh and the app's options;
-at phone width the tabs move to a bar at the bottom. Their only script is
-a small inline one that makes the refresh button reload the page, takes
-Home Assistant's theme (colors, card shape, fonts) from the page around the
-ingress frame and keeps the viewer's interface language in a cookie
+The pages are rendered on the server, each with the same top bar, as Home
+Assistant's own pages draw it: the menu button (narrow only), the three tabs
+centred (no icon and no visible name beside them; a back arrow and the title
+on a subpage), the time of the request, refresh and the app's options; when
+narrow (Home Assistant's narrow, below 870 px) the tabs move to a bar at the
+bottom. Their only script is a small inline one that makes the refresh button
+reload the page, takes Home Assistant's theme (colors, card shape, fonts) from
+the page around the ingress frame, places the page in Home Assistant's frame
+(ha-frame.js: narrow, a phone's notch, the menu button, Home Assistant's own
+bar off on a phone) and keeps the viewer's interface language in a cookie
 (ha-lang.js), in which the server renders the pages; without it the page
 falls back to Home Assistant's default colors and configured language. Everything shown from the bucket goes through the
 app; objects never change, so what was read once is kept in a cache in /data.
@@ -62,7 +65,7 @@ CONTENT_TYPES = {".json": "application/json", ".jpg": "image/jpeg", ".gz": "appl
 TEXT = {
     "en": {
         "overview": "Overview", "details": "Details", "queue": "Queue",
-        "settings": "Settings", "back": "Back", "refresh": "Refresh", "as_of": "As of {}",
+        "menu": "Menu", "settings": "Settings", "back": "Back", "refresh": "Refresh", "as_of": "As of {}",
         "status": "Status", "working": "Archiving works", "broken": "Archiving does not work",
         "r2": "R2 connection", "reachable": "reachable",
         "unreachable": "not reachable", "unknown": "not used since the start", "waiting": "Waiting objects",
@@ -92,7 +95,7 @@ TEXT = {
     },
     "de": {
         "overview": "Übersicht", "details": "Detailansicht", "queue": "Warteschlange",
-        "settings": "Einstellungen", "back": "Zurück", "refresh": "Aktualisieren", "as_of": "Stand {}",
+        "menu": "Menü", "settings": "Einstellungen", "back": "Zurück", "refresh": "Aktualisieren", "as_of": "Stand {}",
         "status": "Status", "working": "Archivierung läuft", "broken": "Archivierung gestört",
         "r2": "R2-Verbindung", "reachable": "erreichbar",
         "unreachable": "nicht erreichbar", "unknown": "seit dem Start noch nicht benutzt", "waiting": "Wartende Objekte",
@@ -171,6 +174,7 @@ ICONS = {
     "download": "M5,20H19V18H5M19,9H15V3H9V9H5L12,16L19,9Z",
     "zip": "M14,17H12V15H10V13H12V15H14M14,9H12V11H14V13H12V11H10V9H12V7H10V5H12V7H14M19,3H5C3.89,3 3,3.89 3,5V19A2,2 0 0,0 5,21H19A2,2 0 0,0 21,19V5C21,3.89 20.1,3 19,3Z",
     "check": "M21,7L9,19L3.5,13.5L4.91,12.09L9,16.17L19.59,5.59L21,7Z",
+    "menu": "M3,6H21V8H3V6M3,11H21V13H3V11M3,16H21V18H3V16Z",
     "ok": "M12 2C6.5 2 2 6.5 2 12S6.5 22 12 22 22 17.5 22 12 17.5 2 12 2M10 17L5 12L6.41 10.59L10 14.17L17.59 6.58L19 8L10 17Z",
     "alert": "M13,13H11V7H13M13,17H11V15H13M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2Z",
 }
@@ -189,14 +193,18 @@ HA_CSS = (Path(__file__).resolve().parents[2] / "local/share/ha-app/ha.css").rea
 # The language of Home Assistant's interface for the page (cookie ha_lang),
 # shared like ha.css; it runs first, in the page's one script
 HA_LANG_JS = (Path(__file__).resolve().parents[2] / "local/share/ha-app/ha-lang.js").read_text()
+# Home Assistant's frame (narrow, the phone's insets, its own bar off on a
+# phone, the menu button), shared the same way; it runs right after ha-lang.js
+HA_FRAME_JS = (Path(__file__).resolve().parents[2] / "local/share/ha-app/ha-frame.js").read_text()
 # The app's icon (icon.png of the repository, as in the app store), which the
-# Dockerfile copies next to ha.css; in the repository (tests) the original
+# Dockerfile copies next to ha.css; in the repository (tests) the original.
+# With its views as tabs the header shows no icon (as Home Assistant's own
+# pages); a page of a single view would show it there
 APP_ICON = next((p.read_bytes() for p in (Path(__file__).resolve().parents[2] / "local/share/ha-app/icon.png",
                                            *[d / "icon.png" for d in Path(__file__).resolve().parents[4:5]])
                   if p.is_file()), b"")
 # What only this page needs, after ha.css
 STYLE = """
-header > .back { margin: 0 8px 0 -12px; }
 main.wide { max-width: none; padding: 0; }
 a.row:hover { background: var(--ha-hover); }
 .next { color: var(--secondary-text-color); }
@@ -266,7 +274,7 @@ SCRIPT = """(() => {
     if (e.target.closest("#refresh")) { e.preventDefault(); location.reload(); }
   });
 })();""".replace("NAMES", json.dumps(THEME_VARS))
-SCRIPT = HA_LANG_JS + SCRIPT
+SCRIPT = HA_LANG_JS + HA_FRAME_JS + SCRIPT
 # Only the page's own inline script runs, pictures (and the app's icon) come
 # from the page itself; the inline style blocks are the page's own
 CSP = ("default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; "
@@ -526,8 +534,9 @@ class Web:
 
     def page(self, request: web.Request, title: str, body: str, back: str | None = None,
              width: str = "", tab: str | None = None) -> web.Response:
-        """A page: one of the tabs (`tab`, titled with the app's name and icon)
-        or a subpage with a back arrow (`back`) and its own title."""
+        """A page: one of the tabs (`tab`: the menu button, the h1 with the
+        app's name, hidden by ha.css beside the tabs, and the tabs) or a
+        subpage with a back arrow (`back`) and its own title."""
         base = html.escape(request.headers.get("X-Ingress-Path", ""), quote=True)
         body = body.replace("{base}", base)
         if back is not None:
@@ -538,12 +547,13 @@ class Web:
             tabs = "".join((f'<a class="tab active" aria-current="page" href="?tab={name}">' if name == tab
                             else f'<a class="tab" href="?tab={name}">') + f"{icon(name)}<span>{self.t(name)}</span></a>"
                            for name in TABS)
-            start = (f'<img class="brand" src="{base}/icon.png" alt="" width="24" height="24">'
-                     f'<h1>{APP_NAME}</h1><nav class="tabs">{tabs}</nav>')
+            start = (f'<a class="icon-button menu" href="" data-ha-menu role="button" title="{self.t("menu")}"'
+                     f' aria-label="{self.t("menu")}">{icon("menu")}</a>'
+                     f'<h1 class="name">{APP_NAME}</h1><nav class="tabs">{tabs}</nav>')
             title = f"{APP_NAME} · {title}" if tab else title
         return web.Response(content_type="text/html", charset="utf-8", text=(
             f'<!doctype html><html lang="{self.lang}"><head><meta charset="utf-8">'
-            '<meta name="viewport" content="width=device-width, initial-scale=1">'
+            '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">'
             f"<title>{html.escape(title)}</title><style>{HA_CSS}</style><style>{STYLE}</style>"
             f"<script>{SCRIPT}</script></head><body><header>{start}"
             f'<div class="actions">{self.header_actions()}</div></header>'

@@ -15,7 +15,7 @@ Requires Home Assistant 2026.11 or later.
 
 The page looks like Home Assistant's settings, takes over the theme in use and speaks the language of Home Assistant's interface (German or English). The data in the pictures is made up for these pictures.
 
-<img src="docs/screenshots/overview.png" alt="Overview, the first of three tabs next to the app's icon and name: status and free tier usage of the account and the bucket" width="700">
+<img src="docs/screenshots/overview.png" alt="Overview, the first of three tabs centred in the header: status and free tier usage of the account and the bucket" width="700">
 
 <img src="docs/screenshots/details.png" alt="Details: archived days as a table grouped by month" width="700">
 
@@ -29,7 +29,7 @@ The page looks like Home Assistant's settings, takes over the theme in use and s
 
 <img src="docs/screenshots/overview-dark.png" alt="Overview in dark mode" width="700">
 
-<img src="docs/screenshots/overview-phone.png" alt="Overview on a phone, the tabs at the bottom" width="300"> <img src="docs/screenshots/day-phone.png" alt="One day on a phone" width="300">
+<img src="docs/screenshots/overview-phone.png" alt="Overview on a phone, with the menu button and the tabs at the bottom" width="300"> <img src="docs/screenshots/day-phone.png" alt="One day on a phone" width="300">
 
 ## Overview
 
@@ -72,7 +72,7 @@ How the log, snapshots, summaries and the free tier guard work is in [the docume
 
 ## Development
 
-The app is a Python package in [`r2_alarm_archive/rootfs/usr/lib/r2_archive`](r2_alarm_archive/rootfs/usr/lib/r2_archive); the page's look comes from the stylesheet shared by these apps, [`ha.css`](r2_alarm_archive/rootfs/usr/local/share/ha-app/ha.css), and its language from the script shared by them, [`ha-lang.js`](r2_alarm_archive/rootfs/usr/local/share/ha-app/ha-lang.js); both stay identical in every app.
+The app is a Python package in [`r2_alarm_archive/rootfs/usr/lib/r2_archive`](r2_alarm_archive/rootfs/usr/lib/r2_archive); the page's look comes from the stylesheet shared by these apps, [`ha.css`](r2_alarm_archive/rootfs/usr/local/share/ha-app/ha.css), its language from the script shared by them, [`ha-lang.js`](r2_alarm_archive/rootfs/usr/local/share/ha-app/ha-lang.js), and its place in Home Assistant's frame (narrow, a phone's notch, the menu button) from [`ha-frame.js`](r2_alarm_archive/rootfs/usr/local/share/ha-app/ha-frame.js); all three stay identical in every app.
 
 ```bash
 python3 -m venv .venv
@@ -81,7 +81,7 @@ python3 -m venv .venv
 scripts/check.sh
 ```
 
-`scripts/check.sh` runs what CI runs (changelog, shellcheck, ruff, tests, and when Docker runs the image built and started and the Page check; `--no-image` skips those). The Page check and the screenshots are one script, `scripts/screenshots.py` (see its header for the setup): it starts the built image in a throwaway container with made-up data (`scripts/demo.py`), opens the page with headless Chromium as Home Assistant's ingress would, and checks every page in light, dark and at phone width: the top bar (icon loaded, name, the tabs in the name's row with the right one active and at the bottom on a phone, *As of* stamp, refresh, settings link with `target="_top"` and the slug), that a tab keeps its address over a reload and back, the version line, and no console errors or CSP violations. With `--out docs/screenshots` it also draws the screenshots. The page check is not part of CI: run `scripts/check.sh` before a release that changes the page.
+`scripts/check.sh` runs what CI runs (changelog, shellcheck, ruff, tests, and when Docker runs the image built and started and the Page check; `--no-image` skips those). The Page check and the screenshots are one script, `scripts/screenshots.py` (see its header for the setup): it starts the built image in a throwaway container with made-up data (`scripts/demo.py`), opens the page with headless Chromium as Home Assistant's ingress would, and checks every page in light, dark and at phone width: the top bar as Home Assistant's own pages draw it (the menu button, shown on a phone; the name, hidden beside the tabs; the tabs centred in the header with the right one active and at the bottom on a phone, *As of* stamp, refresh, settings link with `target="_top"` and the slug), Home Assistant's part of the frame (a stand-in plays it: no kiosk mode on a wide screen; on a phone with a notch and a home bar kiosk mode, no bar of Home Assistant above the app, the top bar from the top and 56 px plus the notch, the bottom bar clear of the home bar, the menu button opening the sidebar), that a tab keeps its address over a reload and back, the version line, and no console errors or CSP violations. With `--out docs/screenshots` it also draws the screenshots. The page check is not part of CI: run `scripts/check.sh` before a release that changes the page.
 
 The image's packages are listed in [`requirements.in`](r2_alarm_archive/requirements.in); [`requirements.txt`](r2_alarm_archive/requirements.txt) pins them and everything they pull in with their hashes, and the image installs it with `--require-hashes`. After changing `requirements.in`, run `uv pip compile requirements.in --generate-hashes --universal --python-version 3.14 -o requirements.txt` in `r2_alarm_archive`.
 
