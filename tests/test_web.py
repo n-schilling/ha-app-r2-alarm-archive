@@ -70,23 +70,47 @@ async def text(client, path, headers=None):
 
 
 async def test_tabs(client):
-    """The start page is the first tab, the overview; every tab page names its
-    tab in the path and marks it active, and there is no menu page any more."""
+    """The start page shows its first view without `?tab=` (or with an unknown
+    one); every view names itself in `?tab=` and marks its tab active, and
+    there is no menu page any more."""
     c, archive, _ = client
-    for path, active in (("/", "overview"), ("/overview", "overview"), ("/details", "details"),
-                         ("/details?alarms=1", "details"), ("/queue", "queue")):
+    for path, active in (("/", "overview"), ("/?", "overview"), ("/?tab=nope", "overview"),
+                         ("/?tab=overview", "overview"), ("/?tab=details", "details"),
+                         ("/?tab=details&alarms=1", "details"), ("/?tab=queue", "queue")):
         page = await text(c, path, {"X-Ingress-Path": "/api/hassio_ingress/abc"})
         nav = page.split('<nav class="tabs">', 1)[1].split("</nav>", 1)[0]
         tabs = re.findall(r'<a class="tab( active)?"(?: aria-current="page")? href="([^"]+)"><svg[^>]*>'
                           r'<path d="[^"]+"/></svg><span>([^<]+)</span></a>', nav)
         assert [(href, label) for _, href, label in tabs] == [
-            ("/api/hassio_ingress/abc/overview", "Übersicht"), ("/api/hassio_ingress/abc/details", "Detailansicht"),
-            ("/api/hassio_ingress/abc/queue", "Warteschlange")], path
-        assert [href.rsplit("/", 1)[1] for on, href, _ in tabs if on] == [active], path
-        assert '<body class="tabbed">' in page and 'class="item"' not in page
+            ("?tab=overview", "Übersicht"), ("?tab=details", "Detailansicht"), ("?tab=queue", "Warteschlange")], path
+        assert [href.split("=", 1)[1] for on, href, _ in tabs if on] == [active], path
+        assert "<body>" in page and 'class="item"' not in page
     assert "Archivierung läuft" in await text(c, "/")
     archive.language = "en"
-    assert "<span>Overview</span>" in await text(c, "/") and "<span>Queue</span>" in await text(c, "/queue")
+    assert "<span>Overview</span>" in await text(c, "/") and "<span>Queue</span>" in await text(c, "/?tab=queue")
+
+
+async def test_old_addresses_move_to_tab(client):
+    """The views' paths before 1.3.3 lead to `?tab=` under the ingress path,
+    with their query."""
+    c, _, _ = client
+    for old, new in (("/overview", "/?tab=overview"), ("/details", "/?tab=details"), ("/queue", "/?tab=queue"),
+                     ("/details?month=2026-09", "/?tab=details&month=2026-09"),
+                     ("/details?alarms=1&month=2026-10", "/?tab=details&alarms=1&month=2026-10")):
+        resp = await c.get(old, headers={"X-Ingress-Path": "/api/hassio_ingress/abc"}, allow_redirects=False)
+        assert resp.status == 303 and resp.headers["Location"] == "/api/hassio_ingress/abc" + new, old
+    resp = await c.get("/details?month=2026-09")
+    assert resp.status == 200 and str(resp.url).endswith("/?tab=details&month=2026-09")
+    assert '<a class="tab active" aria-current="page" href="?tab=details">' in await resp.text()
+
+
+def test_name_is_the_app_store_name():
+    """The header's name is `name` in config.yaml, as the app store shows it."""
+    from pathlib import Path
+
+    from r2_archive.web import APP_NAME
+    config = (Path(__file__).resolve().parents[1] / "r2_alarm_archive/config.yaml").read_text()
+    assert f"name: {APP_NAME}\n" in config or f'name: "{APP_NAME}"\n' in config
 
 
 async def test_icon(client):
@@ -100,30 +124,30 @@ async def test_icon(client):
 
 async def test_overview(client):
     c, archive, _ = client
-    page = await text(c, "/overview", {"X-Ingress-Path": "/api/hassio_ingress/abc"})
+    page = await text(c, "/?tab=overview", {"X-Ingress-Path": "/api/hassio_ingress/abc"})
     assert "Archivierung läuft" in page and 'class="icon-button back"' not in page
     assert "1.234" in page and "900.000" in page and "7,0 MB" in page and "2,0 MB" in page and "0,12 %" in page
     archive.language = "en"
     archive.r2_connected = False
-    assert "R2 not reachable" in await text(c, "/overview")
+    assert "R2 not reachable" in await text(c, "/?tab=overview")
 
 
 async def test_details_by_month(client):
     c, archive, _ = client
     archive.state.uploaded("2026-09-30", "protokoll/2026/09/30/x.json")
-    page = await text(c, "/details")
+    page = await text(c, "/?tab=details")
     # Newest month open, older ones closed; the day counts entries, snapshots, alarms, summaries
     assert '<details id="m-2026-10" open>' in page and '<details id="m-2026-09">' in page
     assert "Oktober 2026" in page and "September 2026" in page and "Sa. 31.10.2026" in page
     assert "<div class='n'>2</div><div class='n'>1</div><div class='n alarm'>1</div><div class='n opt'>1</div>" in page
-    assert '<details id="m-2026-09" open>' in await text(c, "/details?month=2026-09")
+    assert '<details id="m-2026-09" open>' in await text(c, "/?tab=details&month=2026-09")
     assert "Noch nichts archiviert" not in page
 
 
 async def test_day(client):
     c, _, _ = client
     day = await text(c, f"/day/{DAY}")
-    assert 'href="/details?month=2026-10"' in day
+    assert 'href="/?tab=details&amp;month=2026-10"' in day
     # Sorted by time, escaped, in local time
     assert day.index("11:17:33") < day.index("11:17:44")
     assert "ALARM &lt;ausgelöst&gt;" in day and "<ausgelöst>" not in day
@@ -170,9 +194,9 @@ async def test_cache_and_guard(client):
 
 async def test_queue_page(client):
     c, archive, _ = client
-    assert "Nichts wartet" in await text(c, "/queue")
+    assert "Nichts wartet" in await text(c, "/?tab=queue")
     archive._enqueue("protokoll/2026/11/01/x.json", "log", "2026-11-01", b"x" * 2000, "application/json")
-    assert "protokoll/2026/11/01/x.json" in await text(c, "/queue")
+    assert "protokoll/2026/11/01/x.json" in await text(c, "/?tab=queue")
 
 
 async def test_only_ingress(tmp_path, aiohttp_client):
@@ -223,12 +247,13 @@ async def test_alarm_filter(client):
     c, archive, _ = client
     archive.state.uploaded("2026-10-30", "protokoll/2026/10/30/x.json")
     archive.state.uploaded("2026-09-30", "protokoll/2026/09/30/x.json")
-    page = await text(c, "/details?alarms=1")
+    page = await text(c, "/?tab=details&alarms=1")
     assert "Sa. 31.10.2026" in page and "Fr. 30.10.2026" not in page and "September 2026" not in page
-    assert 'class="chip on" href="/details"' in page
+    assert 'class="chip on" href="/?tab=details"' in page
+    assert 'class="chip" href="/?tab=details&amp;alarms=1"' in await text(c, "/?tab=details")
     archive.state.data["uploaded"]["2026-10-31"] = [k for k in archive.state.data["uploaded"]["2026-10-31"]
                                                     if "triggered" not in k]
-    assert "Kein Tag mit Alarm." in await text(c, "/details?alarms=1")
+    assert "Kein Tag mit Alarm." in await text(c, "/?tab=details&alarms=1")
 
 
 async def test_export(client):
@@ -237,7 +262,7 @@ async def test_export(client):
     c, archive, r2 = client
     day = await text(c, f"/day/{DAY}")
     assert f'href="/export/{DAY}.zip"' in day
-    assert 'href="/export/2026-10.zip"' in await text(c, "/details")
+    assert 'href="/export/2026-10.zip"' in await text(c, "/?tab=details")
     # A snapshot file R2 no longer has, e.g. after the retention
     archive.state.uploaded(DAY, f"{FOLDER}/kamera_back.jpg")
     resp = await c.get(f"/export/{DAY}.zip")
@@ -259,20 +284,20 @@ async def test_quarantine_on_queue_page(client):
     c, archive, _ = client
     archive.queue.quarantine.mkdir(parents=True)
     (archive.queue.quarantine / "0000000007.json").write_text("kaputt")
-    page = await text(c, "/queue")
+    page = await text(c, "/?tab=queue")
     assert "Quarantäne" in page and "0000000007.json" in page
     assert "/addon_configs/local_r2_alarm_archive/quarantine" in page
-    assert "1 Objekte in Quarantäne" in await text(c, "/overview")
+    assert "1 Objekte in Quarantäne" in await text(c, "/?tab=overview")
 
 
 async def test_token_on_overview(client):
     from datetime import timedelta
     c, archive, _ = client
-    assert "noch nicht geprüft" in await text(c, "/overview")
+    assert "noch nicht geprüft" in await text(c, "/?tab=overview")
     archive.token_checked, archive.token_expiry = True, None
-    assert "<td>nie</td>" in await text(c, "/overview")
+    assert "<td>nie</td>" in await text(c, "/?tab=overview")
     archive.token_expiry = archive.now() + timedelta(days=5)
-    assert "class=\"bad\">06.11.2026 10:00:00 (in 5 Tagen)" in await text(c, "/overview")
+    assert "class=\"bad\">06.11.2026 10:00:00 (in 5 Tagen)" in await text(c, "/?tab=overview")
 
 
 async def test_series_pictures(client):
@@ -323,8 +348,8 @@ async def test_request_is_no_alarm(client, tmp_path):
     archive.state.data["uploaded"][DAY] = [k for k in archive.state.data["uploaded"][DAY] if "triggered" not in k]
     web = Web(archive, Cache(tmp_path / "cache2"))
     assert web.day_counts(DAY)[1:3] == (1, 0)
-    assert "<div class='n'>1</div><div class='n'>–</div>" in await text(c, "/details")
-    assert "Kein Tag mit Alarm." in await text(c, "/details?alarms=1")
+    assert "<div class='n'>1</div><div class='n'>–</div>" in await text(c, "/?tab=details")
+    assert "Kein Tag mit Alarm." in await text(c, "/?tab=details&alarms=1")
 
 
 async def test_request_without_panel_or_reason(client):
@@ -341,13 +366,13 @@ async def test_request_without_panel_or_reason(client):
 # --- Review fixes -----------------------------------------------------------------
 async def test_version_at_the_bottom_of_every_page(client):
     c, _, _ = client
-    for path in ("/", "/overview", "/details", f"/day/{DAY}", f"/snapshot/{DAY}/{FOLDER.rsplit('/', 1)[1]}",
-                 "/queue"):
+    for path in ("/", "/?tab=overview", "/?tab=details", f"/day/{DAY}", f"/snapshot/{DAY}/{FOLDER.rsplit('/', 1)[1]}",
+                 "/?tab=queue"):
         page = await text(c, path)
         assert page.endswith('</main><footer class="version">R2 Alarm Archive 9.8.7</footer></body></html>'), path
 
 
-PAGES = ("/", "/overview", "/details", f"/day/{DAY}", f"/snapshot/{DAY}/{FOLDER.rsplit('/', 1)[1]}", "/queue")
+PAGES = ("/", "/?tab=overview", "/?tab=details", f"/day/{DAY}", f"/snapshot/{DAY}/{FOLDER.rsplit('/', 1)[1]}", "/?tab=queue")
 
 
 async def test_same_header_on_every_page(client, tmp_path):
@@ -361,8 +386,8 @@ async def test_same_header_on_every_page(client, tmp_path):
         page = await text(c, path, {"X-Ingress-Path": "/api/hassio_ingress/abc"})
         header = page.split("<header>", 1)[1].split("</header>", 1)[0]
         start, actions = header.split('<div class="actions">', 1)
-        if path in ("/", "/overview", "/details", "/queue"):
-            assert re.fullmatch(r'<img class="app-icon" src="/api/hassio_ingress/abc/icon.png" alt="" '
+        if path in ("/", "/?tab=overview", "/?tab=details", "/?tab=queue"):
+            assert re.fullmatch(r'<img class="brand" src="/api/hassio_ingress/abc/icon.png" alt="" '
                                 r'width="24" height="24"><h1>R2 Alarm Archive</h1><nav class="tabs">.*</nav>',
                                 start), path
         else:
@@ -382,7 +407,7 @@ async def test_same_header_on_every_page(client, tmp_path):
 async def test_no_settings_without_slug(tmp_path, aiohttp_client):
     archive, _ = seeded(tmp_path)
     c = await aiohttp_client(Web(archive, Cache(tmp_path / "cache"), allowed_peers=set()).app())
-    page = await text(c, "/overview")
+    page = await text(c, "/?tab=overview")
     assert 'id="refresh"' in page and "/config/app/" not in page
 
 
@@ -445,7 +470,7 @@ async def test_snapshot_links_are_encoded(client):
 async def test_no_bucket_rules_on_the_page(client):
     """The bucket's rules are the Cloudflare account's business: the page says nothing about them."""
     c, _, _ = client
-    page = await text(c, "/overview")
+    page = await text(c, "/?tab=overview")
     assert "Bucket-Regeln" not in page and "Bucket-Sperre" not in page and "wrangler" not in page
 
 
@@ -500,13 +525,13 @@ def test_language_of_home_assistant():
 async def test_page_in_the_viewers_language(client):
     c, archive, _ = client
     archive.language = "de"
-    assert '<html lang="en">' in await text(c, "/overview", {"Cookie": "ha_lang=en", "Accept-Language": "de"})
-    assert '<html lang="en">' in await text(c, "/overview", {"Cookie": "ha_lang=fr"})
+    assert '<html lang="en">' in await text(c, "/?tab=overview", {"Cookie": "ha_lang=en", "Accept-Language": "de"})
+    assert '<html lang="en">' in await text(c, "/?tab=overview", {"Cookie": "ha_lang=fr"})
     archive.language = "en"
-    page = await text(c, "/overview", {"Cookie": "ha_lang=de", "Accept-Language": "en"})
+    page = await text(c, "/?tab=overview", {"Cookie": "ha_lang=de", "Accept-Language": "en"})
     assert '<html lang="de">' in page and "Archivierung läuft" in page
     # Without the cookie, Home Assistant's configured language
-    assert '<html lang="en">' in await text(c, "/overview", {"Accept-Language": "de"})
+    assert '<html lang="en">' in await text(c, "/?tab=overview", {"Accept-Language": "de"})
 
 
 async def test_shared_language_script_first(client):

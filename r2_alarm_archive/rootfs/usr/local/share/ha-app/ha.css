@@ -7,7 +7,8 @@
  * around the ingress frame by setting the same custom properties on :root.
  *
  * Building blocks, named after Home Assistant's own:
- *   header > h1 + .actions > a.icon-button      the 56 px top app bar
+ *   header > img.brand + h1 + nav.tabs > a.tab  the 56 px top app bar: icon, name,
+ *     (+ svg + span) + .actions > a.icon-button  tabs (bottom bar below 600 px)
  *   main > .cards > .card > h2 + .content       ha-card in a responsive grid
  *   .card > .card-actions                       the line of buttons under a card
  *   .state.ok|.bad|.error > svg + text          a status line with an icon
@@ -93,6 +94,17 @@ header h1 {
   margin: 0; font-size: var(--ha-font-size-xl); font-weight: var(--ha-font-weight-normal); line-height: 32px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
+header .brand { flex: none; width: 24px; height: 24px; margin-right: 12px; object-fit: contain; }
+/* Tabs right after the name, like the tabs of Home Assistant's settings pages */
+header .tabs { display: flex; align-self: stretch; min-width: 0; margin-left: 24px; overflow-x: auto; scrollbar-width: none; }
+header .tab {
+  display: flex; align-items: center; justify-content: center; padding: 0 20px; position: relative;
+  color: var(--sidebar-text-color); font-weight: var(--ha-font-weight-medium); white-space: nowrap; opacity: 0.8;
+}
+header .tab svg { display: none; }
+header .tab:hover { background: var(--ha-hover); }
+header .tab.active { color: var(--primary-color); opacity: 1; }
+header .tab.active::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: var(--primary-color); }
 header .actions { margin-left: auto; display: flex; align-items: center; }
 header .stamp { margin-right: 4px; font-size: var(--ha-font-size-s); color: var(--secondary-text-color); white-space: nowrap; }
 .icon-button {
@@ -230,6 +242,19 @@ footer.version {
 
 @media (max-width: 600px) {
   main { padding: 8px; }
+  /* Narrow: the tabs leave the header for a bar at the bottom, icon over text,
+     as on Home Assistant's own settings pages */
+  body:has(> header .tabs) { padding-bottom: calc(57px + env(safe-area-inset-bottom)); }
+  header .tabs {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 2; margin: 0; justify-content: space-around;
+    background: var(--sidebar-background-color); border-top: 1px solid var(--divider-color);
+    padding-bottom: env(safe-area-inset-bottom); overflow: hidden;
+  }
+  header .tab { flex: 1 1 0; flex-direction: column; gap: 2px; height: 56px; padding: 6px 2px 4px; font-size: 11px; min-width: 0; }
+  header .tab svg { display: block; padding: 2px 12px; border-radius: 14px; box-sizing: content-box; }
+  header .tab span { overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+  header .tab.active svg { background: color-mix(in srgb, var(--primary-color) 15%, transparent); }
+  header .tab.active::after { display: none; }
   .opt { display: none; }
   .search { margin-left: 0; flex: 1 0 100%; }
   .search input { width: 100%; }

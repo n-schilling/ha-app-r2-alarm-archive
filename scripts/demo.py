@@ -20,6 +20,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -38,6 +39,12 @@ from r2_archive.web import Cache, Web, host_slug  # noqa: E402
 LOG = "input_boolean.alarm_log"
 PANEL = "alarm_control_panel.home"
 NOW = datetime(2026, 11, 14, 9, 30, tzinfo=UTC)
+# The demo's clock starts at NOW and runs, so a refresh moves the page's stamp
+STARTED = time.monotonic()
+
+
+def running_clock() -> datetime:
+    return NOW + timedelta(seconds=time.monotonic() - STARTED)
 CAMERAS = ["camera.front_door", "camera.garden"]
 
 # (local time, message) per day; a panel change in brackets makes a snapshot
@@ -69,7 +76,7 @@ def demo(folder: Path, shots: dict[str, bytes]) -> Archive:
                      {"entity_id": "person.alex", "state": "home",
                       "attributes": {"user_id": "u-alex", "friendly_name": "Alex"}}]
     archive = Archive(cfg, ha, r2, FakeCloudflare(), Queue(folder / "queue"), State(folder / "state.json"),
-                      lambda: NOW)
+                      running_clock)
     archive.tz, archive.language, archive.ha_connected, archive.r2_connected = BERLIN, "en", True, True
     archive.token_checked = True
     archive.guard.update(Usage(1_874, 9_310, 412_000_000, 1_204, 6_877, 96_400_000),

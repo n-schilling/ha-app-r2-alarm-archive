@@ -174,9 +174,9 @@ ICONS = {
     "ok": "M12 2C6.5 2 2 6.5 2 12S6.5 22 12 22 22 17.5 22 12 17.5 2 12 2M10 17L5 12L6.41 10.59L10 14.17L17.59 6.58L19 8L10 17Z",
     "alert": "M13,13H11V7H13M13,17H11V15H13M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2Z",
 }
-# The views of the page, as tabs in the header: (name = text key and icon, path);
-# the first one is also the start page
-TABS = (("overview", "/overview"), ("details", "/details"), ("queue", "/queue"))
+# The views of the start page, as tabs in the header (name = text key, icon and
+# `?tab=<name>`); the first one is shown when the address names none
+TABS = ("overview", "details", "queue")
 
 
 def icon(name: str, cls: str = "") -> str:
@@ -197,17 +197,6 @@ APP_ICON = next((p.read_bytes() for p in (Path(__file__).resolve().parents[2] / 
 # What only this page needs, after ha.css
 STYLE = """
 header > .back { margin: 0 8px 0 -12px; }
-header > .app-icon { flex: none; width: 24px; height: 24px; margin-right: 12px; }
-/* The tabs of Home Assistant's settings pages, in the row of the name (as Network Plus) */
-header > .tabs { display: flex; align-self: stretch; min-width: 0; margin-left: 24px; overflow-x: auto;
-  scrollbar-width: none; }
-.tab { display: flex; align-items: center; justify-content: center; position: relative; padding: 0 20px;
-  color: var(--sidebar-text-color); font-weight: var(--ha-font-weight-medium); white-space: nowrap; opacity: 0.8; }
-.tab:hover { background: var(--ha-hover); }
-.tab.active { color: var(--primary-color); opacity: 1; }
-.tab.active::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 2px;
-  background: var(--primary-color); }
-.tab svg { display: none; }
 main.wide { max-width: none; padding: 0; }
 a.row:hover { background: var(--ha-hover); }
 .next { color: var(--secondary-text-color); }
@@ -243,17 +232,6 @@ main.wide .toolbar { min-height: 56px; padding: 8px 16px; border-bottom: 1px sol
 main.wide .alert { margin: 16px; }
 .chip svg { width: 18px; height: 18px; }
 @media (max-width: 600px) {
-  /* At phone width the tabs are a bar at the bottom, icon over name, as in Network Plus */
-  header > .tabs { position: fixed; z-index: 2; left: 0; right: 0; bottom: 0; margin: 0;
-    padding-bottom: env(safe-area-inset-bottom); background: var(--sidebar-background-color);
-    border-top: 1px solid var(--divider-color); }
-  body.tabbed { padding-bottom: calc(57px + env(safe-area-inset-bottom)); }
-  .tab { flex: 1 1 0; flex-direction: column; gap: 2px; min-width: 0; height: 56px; padding: 6px 2px 4px;
-    font-size: 11px; line-height: 16px; }
-  .tab span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
-  .tab svg { display: block; box-sizing: content-box; width: 24px; height: 24px; padding: 2px 12px; border-radius: 14px; }
-  .tab.active svg { background: color-mix(in srgb, var(--primary-color) 15%, transparent); }
-  .tab.active::after { display: none; }
   .cols-details { --cols: minmax(0, 5fr) repeat(3, minmax(0, 3fr)) 24px; }
   .cols-log { --cols: 64px minmax(0, 1fr); }
   .cols-queue { --cols: minmax(0, 3fr) minmax(0, 1fr) minmax(0, 2fr); }
@@ -434,13 +412,13 @@ class Web:
 
     def app(self) -> web.Application:
         app = web.Application(middlewares=[self._only_ingress, self._security_headers, self._language])
-        app.router.add_get("/", self.overview)
+        app.router.add_get("/", self.start)
         app.router.add_get("/icon.png", self.icon)
-        app.router.add_get("/overview", self.overview)
-        app.router.add_get("/details", self.details)
+        # The views had paths of their own before 1.3.3; those addresses lead to `?tab=`
+        for view in TABS:
+            app.router.add_get(f"/{view}", self.moved)
         app.router.add_get("/day/{day}", self.day)
         app.router.add_get("/snapshot/{day}/{name}", self.snapshot)
-        app.router.add_get("/queue", self.queue)
         app.router.add_get("/file/{key:.+}", self.file)
         app.router.add_get("/export/{period}.zip", self.export)
         return app
@@ -547,23 +525,22 @@ class Web:
         or a subpage with a back arrow (`back`) and its own title."""
         base = html.escape(request.headers.get("X-Ingress-Path", ""), quote=True)
         body = body.replace("{base}", base)
-        body_class = ""
         if back is not None:
-            start = (f'<a class="icon-button back" href="{base}{back}" title="{self.t("back")}">{icon("back")}</a>'
+            start = (f'<a class="icon-button back" href="{base}{html.escape(back)}" title="{self.t("back")}">'
+                     f'{icon("back")}</a>'
                      f"<h1>{html.escape(title)}</h1>")
         else:
-            tabs = "".join((f'<a class="tab active" aria-current="page" href="{base}{path}">' if name == tab
-                            else f'<a class="tab" href="{base}{path}">') + f"{icon(name)}<span>{self.t(name)}</span></a>"
-                           for name, path in TABS)
-            start = (f'<img class="app-icon" src="{base}/icon.png" alt="" width="24" height="24">'
+            tabs = "".join((f'<a class="tab active" aria-current="page" href="?tab={name}">' if name == tab
+                            else f'<a class="tab" href="?tab={name}">') + f"{icon(name)}<span>{self.t(name)}</span></a>"
+                           for name in TABS)
+            start = (f'<img class="brand" src="{base}/icon.png" alt="" width="24" height="24">'
                      f'<h1>{APP_NAME}</h1><nav class="tabs">{tabs}</nav>')
             title = f"{APP_NAME} · {title}" if tab else title
-            body_class = ' class="tabbed"'
         return web.Response(content_type="text/html", charset="utf-8", text=(
             f'<!doctype html><html lang="{self.lang}"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width, initial-scale=1">'
             f"<title>{html.escape(title)}</title><style>{HA_CSS}</style><style>{STYLE}</style>"
-            f"<script>{SCRIPT}</script></head><body{body_class}><header>{start}"
+            f"<script>{SCRIPT}</script></head><body><header>{start}"
             f'<div class="actions">{self.header_actions()}</div></header>'
             f'<main class="{width}">{body}</main>{self.about()}</body></html>'))
 
@@ -632,6 +609,19 @@ class Web:
         return folder.rsplit("/", 1)[1].split("_", 1)[1]
 
     # --- Pages -----------------------------------------------------------------------
+    async def start(self, request: web.Request) -> web.Response:
+        """The start page in the view of `?tab=`, the first one without it."""
+        view = request.query.get("tab")
+        handler = {"overview": self.overview, "details": self.details, "queue": self.queue}
+        return await handler.get(view if view in TABS else TABS[0])(request)
+
+    async def moved(self, request: web.Request) -> web.Response:
+        """An old address of a view (/details?month=…) to the start page with
+        `?tab=` and the rest of its query, under the ingress path."""
+        rest = request.rel_url.raw_query_string
+        query = "&".join(["tab=" + request.path.strip("/")] + ([rest] if rest else []))
+        raise web.HTTPSeeOther(f"{request.headers.get('X-Ingress-Path', '')}/?{query}")
+
     async def icon(self, request: web.Request) -> web.Response:
         """The app's icon for the header, from the image itself."""
         if not APP_ICON:
@@ -760,7 +750,8 @@ class Web:
                 f'<div class="n opt">{self.t("summaries")}</div><div></div></div>')
         empty = self.t("no_alarm_days" if only_alarms else "no_days")
         body = "".join(groups) or f'<div class="row empty"><div>{empty}</div></div>'
-        chip = (f'<a class="chip{" on" if only_alarms else ""}" href="{{base}}/details{"" if only_alarms else "?alarms=1"}">'
+        chip = (f'<a class="chip{" on" if only_alarms else ""}" '
+                f'href="{{base}}/?tab=details{"" if only_alarms else "&amp;alarms=1"}">'
                 + (icon("check") if only_alarms else "") + f'{self.t("only_alarms")}</a>')
         return self.page(request, self.t("details"), f'<div class="toolbar">{chip}</div>'
                          f'<div class="table cols-details">{head}{body}</div>', width="wide", tab="details")
@@ -811,7 +802,7 @@ class Web:
         export = f'<a class="button" href="{{base}}/export/{day}.zip">{icon("zip")}{self.t("export_day")}</a>'
         body = (note + self.card(self.t("log"), log, padded=False) + self.card(self.t("snapshots"), snapshots, padded=False)
                 + self.card(self.t("summary"), summaries, padded=False, actions=export))
-        return self.page(request, self.day_text(day, weekday=True), body, back=f"/details?month={day[:7]}")
+        return self.page(request, self.day_text(day, weekday=True), body, back=f"/?tab=details&month={day[:7]}")
 
     @staticmethod
     def folder_time(folder: str) -> datetime | None:

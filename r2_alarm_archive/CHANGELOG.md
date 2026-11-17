@@ -2,6 +2,13 @@
 
 All notable changes to this app are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the app uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.3] - 2026-11-17
+
+### Changed
+
+- The page's views are in the address as `?tab=overview`, `?tab=details` and `?tab=queue` on the start page, as in the other apps; the old addresses (`/overview`, `/details?month=…`, `/queue`) lead there, and a day's back arrow returns to its month with the new address
+- The page uses the shared stylesheet of the apps (`ha.css`) with the header's icon, tabs and bottom bar; the page's own copy of those rules is gone. The look stays the same
+
 ## [1.3.2] - 2026-11-14
 
 ### Changed

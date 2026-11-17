@@ -3,14 +3,17 @@ image in a throwaway container with made-up data (scripts/demo.py), opens
 the page with a headless Chromium as Home Assistant's ingress would, and
 checks every page in light, dark and at phone width (STANDARD.md §7 and §8):
 
-- the header: the app's icon (loaded, from the page itself) and name with
-  the three tabs in the same row, the active one the page's (on a subpage a
-  back arrow and the title instead), then the stamp "As of HH:MM:SS", the
-  refresh button (it reloads the page) and the link to the app's options
-  with target="_top" and the slug from the host name; at phone width the
-  tabs are a bar at the bottom of the window; the start page is the first
-  tab, and a click on a tab puts it into the address, back returns;
-- the version line "R2 Alarm Archive <version of config.yaml>" at the bottom;
+- the header: the app's icon (loaded, from the page itself, left of the
+  name) and name (`name` in config.yaml) with the three tabs in the same row,
+  the active one the page's (on a subpage a back arrow and the title
+  instead), then the stamp "As of HH:MM:SS", the refresh button (it reloads
+  the page and moves the stamp) and the link to the app's options with
+  target="_top" and the slug from the host name; on a wide screen no bar at
+  the bottom; at phone width the tabs are a bar at the bottom of the window
+  and icon, name and buttons stay inside the header; the start page is the
+  first view, a click on a tab puts `?tab=<view>` into the address, back
+  returns, and the old addresses (/details?month=…) lead to `?tab=`;
+- the version line "<name> <version of config.yaml>" at the bottom;
 - no console errors, no script errors, no Content-Security-Policy violations;
 - dark mode, and no page wider than a phone at 390 px;
 - the page takes the language of Home Assistant's interface, not the
@@ -51,8 +54,10 @@ from pathlib import Path
 from playwright.async_api import async_playwright
 
 ROOT = Path(__file__).resolve().parents[1]
-NAME = "R2 Alarm Archive"
-VERSION = (ROOT / "r2_alarm_archive/config.yaml").read_text().split('version: "', 1)[1].split('"', 1)[0]
+CONFIG = (ROOT / "r2_alarm_archive/config.yaml").read_text()
+# The name the app store shows, which the header must show as it is
+NAME = re.search(r'^name: "?(.*?)"?$', CONFIG, re.M).group(1)
+VERSION = CONFIG.split('version: "', 1)[1].split('"', 1)[0]
 # Like a container of the Supervisor: the host name gives the slug
 HOSTNAME = "1a2b3c4d-r2-alarm-archive"
 SLUG = HOSTNAME.replace("-", "_")
@@ -69,9 +74,9 @@ font:20px sans-serif;color:#fff;background:linear-gradient(135deg,{color},#e8eef
 
 # (screenshot, path, active tab or None for a subpage with a back arrow); the
 # snapshot's path is found on the day's page
-PAGES = [("start", "/", "overview"), ("overview", "/overview", "overview"), ("details", "/details", "details"),
-         ("alarm-filter", "/details?alarms=1", "details"), ("day", "/day/2026-11-07", None),
-         ("snapshot", None, None), ("queue", "/queue", "queue")]
+PAGES = [("start", "/", "overview"), ("overview", "/?tab=overview", "overview"),
+         ("details", "/?tab=details", "details"), ("alarm-filter", "/?tab=details&alarms=1", "details"),
+         ("day", "/day/2026-11-07", None), ("snapshot", None, None), ("queue", "/?tab=queue", "queue")]
 TABS = [("overview", "Overview"), ("details", "Details"), ("queue", "Queue")]
 # (suffix, width, colour scheme); the screenshots keep their names from before
 MODES = [("", 1200, "light"), ("-dark", 1200, "dark"), ("-phone", 390, "light")]
@@ -88,7 +93,7 @@ HEADER = """() => {
   return {
     start: kids.map((e) => e.tagName.toLowerCase() + (e.className ? "." + e.className.replace(/ /g, ".") : "")),
     icon: (() => {
-      const img = header && header.querySelector(":scope > img.app-icon");
+      const img = header && header.querySelector(":scope > img.brand");
       return img ? { src: img.getAttribute("src"), loaded: img.complete && img.naturalWidth > 0,
                      width: img.getBoundingClientRect().width } : null;
     })(),
@@ -100,7 +105,21 @@ HEADER = """() => {
       const head = box(header);
       return { h1: h1 && (h1.top + h1.bottom) / 2, nav: nav && (nav.top + nav.bottom) / 2,
                navTop: nav && nav.top, navBottom: nav && nav.bottom, headBottom: head && head.bottom,
-               window: window.innerHeight, bodyPad: parseFloat(getComputedStyle(document.body).paddingBottom) };
+               window: window.innerHeight, bodyPad: parseFloat(getComputedStyle(document.body).paddingBottom),
+               navFixed: !!nav && getComputedStyle(header.querySelector(":scope > nav.tabs")).position === "fixed" };
+    })(),
+    // Icon (or back arrow), name and the visible buttons, each with its box and whether it lies in the header's
+    boxes: (() => {
+      if (!header) return [];
+      const head = header.getBoundingClientRect();
+      return [...header.querySelectorAll(":scope > img.brand, :scope > a.back, :scope > h1, :scope > .actions > *")]
+        .filter((e) => e.offsetParent !== null).map((e) => {
+          const r = e.getBoundingClientRect();
+          return { what: e.tagName.toLowerCase() + (e.className ? "." + e.className.replace(/ /g, ".") : ""),
+                   left: r.left, right: r.right,
+                   inside: r.left >= head.left - 0.5 && r.right <= head.right + 0.5
+                           && r.top >= head.top - 0.5 && r.bottom <= head.bottom + 0.5 };
+        });
     })(),
     tabs: header ? [...header.querySelectorAll(":scope > nav.tabs > a")].map((a) => ({
       cls: a.className, href: a.getAttribute("href"), text: a.textContent, visible: a.offsetParent !== null,
@@ -146,7 +165,7 @@ class Failures(list):
 
 def check_header(info: dict, where: str, tab: str | None, phone: bool, failed: Failures) -> None:
     start = [s for s in info["start"] if s != "div.actions"]
-    expected = ["img.app-icon", "h1", "nav.tabs"] if tab else ["a.icon-button.back", "h1"]
+    expected = ["img.brand", "h1", "nav.tabs"] if tab else ["a.icon-button.back", "h1"]
     failed.expect(start == expected, where, f"header starts with {start}")
     failed.expect(info["start"][-1:] == ["div.actions"], where, "the actions are not last in the header")
     if tab is None:
@@ -158,22 +177,29 @@ def check_header(info: dict, where: str, tab: str | None, phone: bool, failed: F
         failed.expect(icon.get("src") == INGRESS + "/icon.png" and icon.get("loaded") and icon.get("width") == 24,
                       where, f"app icon {icon}")
         tabs = info["tabs"]
-        failed.expect([(t["href"], t["text"]) for t in tabs] == [(f"{INGRESS}/{n}", label) for n, label in TABS],
+        failed.expect([(t["href"], t["text"]) for t in tabs] == [(f"?tab={n}", label) for n, label in TABS],
                       where, f"tabs {[(t['href'], t['text']) for t in tabs]}")
-        active = [t["href"].rsplit("/", 1)[1] for t in tabs if t["cls"] == "tab active" and t["current"] == "page"]
+        active = [t["href"].split("=", 1)[1] for t in tabs if t["cls"] == "tab active" and t["current"] == "page"]
         failed.expect(active == [tab] and sum("active" in t["cls"] for t in tabs) == 1, where,
                       f"active tab {active}, not {tab}")
         failed.expect(all(t["visible"] for t in tabs), where, "a tab is hidden")
         rows = info["rows"]
+        boxes = {b["what"]: b for b in info["boxes"]}
+        brand, name = boxes.get("img.brand"), boxes.get("h1")
+        failed.expect(brand is not None and name is not None and brand["right"] <= name["left"], where,
+                      f"the icon is not left of the name: {brand}, {name}")
         if phone:
             # A bar at the bottom of the window; the page keeps room for it
             failed.expect(rows["navBottom"] is not None and abs(rows["navBottom"] - rows["window"]) <= 1
                           and rows["bodyPad"] >= 56, where, f"tabs not at the bottom: {rows}")
         else:
+            failed.expect(not rows["navFixed"] and rows["bodyPad"] < 56, where, f"a bar at the bottom: {rows}")
             # In the row of the name: centred like it, inside the header
             failed.expect(rows["h1"] is not None and rows["nav"] is not None and abs(rows["h1"] - rows["nav"]) <= 2
                           and rows["navTop"] >= 0 and rows["navBottom"] <= rows["headBottom"] + 0.5,
                           where, f"tabs not in the row of the name: {rows}")
+    outside = [b["what"] for b in info["boxes"] if not b["inside"]]
+    failed.expect(not outside, where, f"outside the header: {outside}")
     acts = info["actions"]
     failed.expect(len(acts) == 3, where, f"{len(acts)} items in .actions, not stamp, refresh and settings")
     if len(acts) == 3:
@@ -280,24 +306,44 @@ async def check(browser, base: str, out: Path | None) -> Failures:
             check_header(info, where, tab, width < 600, failed)
             failed.expect(dark(info["background"]) == (scheme == "dark"), where,
                           f"background {info['background']} in {scheme} mode")
+            if name == "day":
+                failed.expect(info["back"] == f"{INGRESS}/?tab=details&month=2026-11", where,
+                              f"back arrow to {info['back']!r}, not the details of its month")
             if name == "start":
-                # Refresh loads the same page again
+                # Refresh loads the same page again and moves the stamp (the demo's clock runs)
+                before = await page.text_content("header .stamp")
+                await page.wait_for_timeout(1100)
                 async with page.expect_navigation() as reload:
                     await page.click("#refresh")
                 answer = await reload.value
                 failed.expect(answer is not None and answer.status == 200 and page.url == entry + "/",
                               where, f"refresh went to {page.url}")
-                # A tab goes to its own address, which keeps it on reload; back returns
-                await page.click('header nav.tabs a[href$="/queue"]')
+                after = await page.text_content("header .stamp")
+                failed.expect(after != before, where, f"refresh left the stamp at {after!r}")
+                # A tab puts its view into the address, which keeps it on reload; back returns
+                await page.click('header nav.tabs a[href="?tab=queue"]')
                 await page.wait_for_load_state()
                 current = await page.get_attribute("header nav.tabs a.active", "href")
-                failed.expect(page.url == entry + "/queue" and current == INGRESS + "/queue", where,
+                failed.expect(page.url == entry + "/?tab=queue" and current == "?tab=queue", where,
                               f"the queue tab went to {page.url}, active {current}")
                 await page.reload()
                 current = await page.get_attribute("header nav.tabs a.active", "href")
-                failed.expect(current == INGRESS + "/queue", where, f"after a reload the active tab is {current}")
+                failed.expect(current == "?tab=queue", where, f"after a reload the active tab is {current}")
                 await page.go_back()
                 failed.expect(page.url == entry + "/", where, f"back went to {page.url}")
+                # The old address of a view leads to its tab, with its query, under the
+                # ingress path (asked here, as the browser does not route a redirect again)
+                moved = await context.request.get(base + "/details?month=2026-10", max_redirects=0,
+                                                  headers={"x-ingress-path": INGRESS})
+                location = moved.headers.get("location")
+                failed.expect(moved.status == 303 and location == f"{INGRESS}/?tab=details&month=2026-10", where,
+                              f"/details?month=2026-10 answered {moved.status} to {location}")
+                answer = await page.goto(base + (location or ""))
+                current = await page.get_attribute("header nav.tabs a.active", "href")
+                failed.expect(answer is not None and answer.status == 200 and current == "?tab=details",
+                              where, f"{location} answered {answer and answer.status}, active {current}")
+                failed.expect(await page.get_attribute("#m-2026-10", "open") is not None, where,
+                              "the old address did not keep its month")
             failed.expect(not errors, where, f"console errors {errors}")
             if out is not None and where in SHOTS:
                 # At phone width the window as a phone shows it: the tab bar at its bottom
