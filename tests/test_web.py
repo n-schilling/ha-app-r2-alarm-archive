@@ -202,7 +202,9 @@ async def test_queue_page(client):
 async def test_only_ingress(tmp_path, aiohttp_client):
     archive, _ = seeded(tmp_path)
     c = await aiohttp_client(Web(archive, Cache(tmp_path / "cache")).app())
-    assert (await c.get("/")).status == 403
+    refused = await c.get("/")
+    assert refused.status == 403
+    assert refused.headers["Cache-Control"] == "no-store" and "Content-Security-Policy" in refused.headers
 
 
 async def test_storage_growth(tmp_path):
@@ -430,13 +432,21 @@ async def test_security_headers(client):
 
     from r2_archive.web import SCRIPT
     c, _, _ = client
-    for path in ("/", f"/file/{FOLDER}/kamera_front.jpg"):
-        resp = await c.get(path)
-        assert resp.headers["X-Content-Type-Options"] == "nosniff"
-        csp = resp.headers["Content-Security-Policy"]
-        digest = base64.b64encode(hashlib.sha256(SCRIPT.encode()).digest()).decode()
-        assert f"script-src 'sha256-{digest}'" in csp and "default-src 'none'" in csp
-        assert "frame-ancestors 'self'" in csp
+    digest = base64.b64encode(hashlib.sha256(SCRIPT.encode()).digest()).decode()
+    # Every answer: pages, the streamed ZIP, a redirect, an error, the icon and files
+    private = ("/icon.png", f"/file/{FOLDER}/kamera_front.jpg")
+    for path in ("/", "/?tab=queue", f"/day/{DAY}", f"/snapshot/{DAY}/20261031T101733.000000Z_triggered",
+                 f"/export/{DAY}.zip", "/overview", "/day/kein-tag", *private):
+        resp = await c.get(path, allow_redirects=False)
+        assert resp.headers["X-Content-Type-Options"] == "nosniff", path
+        assert resp.headers["Referrer-Policy"] == "same-origin", path
+        policy = {part.split()[0]: part.split()[1:]
+                  for part in resp.headers["Content-Security-Policy"].split(";") if part.strip()}
+        assert policy == {"default-src": ["'none'"], "img-src": ["'self'"], "style-src": ["'unsafe-inline'"],
+                          "script-src": [f"'sha256-{digest}'"], "base-uri": ["'none'"],
+                          "form-action": ["'none'"], "frame-ancestors": ["'self'"]}, path
+        # The page and its data are never kept; the icon and the archived files privately
+        assert resp.headers["Cache-Control"] == ("private, max-age=86400" if path in private else "no-store"), path
     # The page carries exactly that script
     assert f"<script>{SCRIPT}</script>" in await text(c, "/")
 

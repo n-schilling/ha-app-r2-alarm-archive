@@ -2,6 +2,13 @@
 
 All notable changes to this app are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the app uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.4] - 2026-11-17
+
+### Security
+
+- The page and its data are never kept by the browser (`Cache-Control: no-store`); only the app's icon and the archived files (pictures and meta files, which never change once uploaded) may stay in its private cache for a day
+- The security headers (content security policy, `nosniff`, referrer policy) are on every answer of the page, now also on the day's ZIP download, redirects, errors and refused requests
+
 ## [1.3.3] - 2026-11-17
 
 ### Changed

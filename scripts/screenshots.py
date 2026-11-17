@@ -219,6 +219,28 @@ def check_header(info: dict, where: str, tab: str | None, phone: bool, failed: F
     failed.expect(info["wide"] <= 0, where, f"{info['wide']} px wider than the window")
 
 
+async def security_headers(answer, where: str, failed: Failures) -> None:
+    """The headers STANDARD.md §3 asks of every answer of the page."""
+    # A page's answer (Response) has all of them in all_headers(); context.request's (APIResponse) in headers
+    headers = {} if answer is None else await answer.all_headers() if hasattr(answer, "all_headers") \
+        else answer.headers
+    policy = {
+        part.split()[0]: part.split()[1:]
+        for part in headers.get("content-security-policy", "").split(";") if part.strip()
+    }
+    scripts = policy.get("script-src", [])
+    failed.expect(policy.get("default-src") == ["'none'"], where, f"CSP default-src {policy.get('default-src')}")
+    failed.expect("'unsafe-inline'" not in scripts and any(s.startswith(("'sha256-", "'nonce-")) for s in scripts),
+                  where, f"CSP script-src {scripts}, not by hash or nonce")
+    failed.expect(policy.get("frame-ancestors") == ["'self'"], where, "CSP frame-ancestors not 'self'")
+    failed.expect(policy.get("base-uri") == ["'none'"], where, "CSP base-uri not 'none'")
+    failed.expect(policy.get("form-action") in (["'none'"], ["'self'"]), where, "CSP form-action")
+    failed.expect(headers.get("x-content-type-options") == "nosniff", where, "X-Content-Type-Options not nosniff")
+    failed.expect(headers.get("referrer-policy") in ("no-referrer", "same-origin"), where,
+                  f"Referrer-Policy {headers.get('referrer-policy')}")
+    failed.expect(headers.get("cache-control") == "no-store", where, f"Cache-Control {headers.get('cache-control')}")
+
+
 def dark(colour: str) -> bool:
     r, g, b = (int(n) for n in re.findall(r"\d+", colour)[:3])
     return r + g + b < 3 * 96
@@ -302,6 +324,7 @@ async def check(browser, base: str, out: Path | None) -> Failures:
             answer = await page.goto(entry + paths[name])
             failed.expect(answer is not None and answer.status == 200, where,
                           f"HTTP {answer.status if answer else '–'}")
+            await security_headers(answer, where, failed)
             info = await page.evaluate(HEADER)
             check_header(info, where, tab, width < 600, failed)
             failed.expect(dark(info["background"]) == (scheme == "dark"), where,
@@ -336,6 +359,7 @@ async def check(browser, base: str, out: Path | None) -> Failures:
                 moved = await context.request.get(base + "/details?month=2026-10", max_redirects=0,
                                                   headers={"x-ingress-path": INGRESS})
                 location = moved.headers.get("location")
+                await security_headers(moved, where + " (303)", failed)
                 failed.expect(moved.status == 303 and location == f"{INGRESS}/?tab=details&month=2026-10", where,
                               f"/details?month=2026-10 answered {moved.status} to {location}")
                 answer = await page.goto(base + (location or ""))

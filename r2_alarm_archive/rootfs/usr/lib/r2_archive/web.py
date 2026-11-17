@@ -411,7 +411,10 @@ class Web:
         self.version = version
 
     def app(self) -> web.Application:
-        app = web.Application(middlewares=[self._only_ingress, self._security_headers, self._language])
+        app = web.Application(middlewares=[self._only_ingress, self._language])
+        # A signal, not a middleware: it also reaches the streamed ZIP (sent before a
+        # middleware sees it), redirects, errors and the refusal of _only_ingress
+        app.on_response_prepare.append(self._security_headers)
         app.router.add_get("/", self.start)
         app.router.add_get("/icon.png", self.icon)
         # The views had paths of their own before 1.3.3; those addresses lead to `?tab=`
@@ -439,13 +442,15 @@ class Web:
             raise web.HTTPForbidden(text="only through Home Assistant")
         return await handler(request)
 
-    @web.middleware
-    async def _security_headers(self, request: web.Request, handler):
-        response = await handler(request)
+    @staticmethod
+    async def _security_headers(request: web.Request, response: web.StreamResponse) -> None:
+        """STANDARD.md §3 on every answer. Nothing is kept by the browser but what
+        an answer allows itself: the icon and the archived files (pictures, meta
+        files, never changed once uploaded) as `private`, for one day."""
         response.headers.setdefault("Content-Security-Policy", CSP)
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("Referrer-Policy", "same-origin")
-        return response
+        response.headers.setdefault("Cache-Control", "no-store")
 
     @web.middleware
     async def _language(self, request: web.Request, handler):
